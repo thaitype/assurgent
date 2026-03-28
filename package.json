@@ -14,7 +14,10 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "lint": "biome check .",
-    "lint:fix": "biome check . --fix"
+    "lint:fix": "biome check . --fix",
+    "release:patch": "release-it patch",
+    "release:minor": "release-it minor",
+    "release:major": "release-it major"
   },
   "dependencies": {
     "execa": "^9.5.2",
@@ -23,6 +26,7 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/bun": "latest",
+    "release-it": "^19.2.4",
     "typescript": "^5.8.2"
   }
 }
