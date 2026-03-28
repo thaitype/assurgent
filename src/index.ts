@@ -2,7 +2,7 @@ import path from "node:path";
 import { ClaudeCodeAdapter } from "./agent/claude-code";
 import { TelegramAdapter } from "./chat/telegram";
 import type { Config } from "./config";
-import { loadConfig } from "./config";
+import { getAssurgentHome, loadConfig } from "./config";
 import { SessionManager } from "./core/session-manager";
 import { Wrapper } from "./core/wrapper";
 import type { AgentAdapter } from "./interfaces/agent-adapter";
@@ -33,7 +33,7 @@ function createAgentAdapter(cfg: Config): AgentAdapter {
 const chat = createChatAdapter(config);
 const agent = createAgentAdapter(config);
 const sessions = new SessionManager({
-  statePath: path.join(config.workspacePath, "state"),
+  statePath: path.join(getAssurgentHome(), "state"),
 });
 
 const wrapper = new Wrapper(
