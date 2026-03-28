@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 /** Runtime configuration for the bot. */
@@ -29,6 +30,11 @@ export interface Config {
   };
   /** Absolute path to the workspace directory Claude Code runs in. */
   workspacePath: string;
+}
+
+/** Returns the resolved ASSURGENT_HOME path. */
+export function getAssurgentHome(): string {
+  return process.env.ASSURGENT_HOME ?? path.join(os.homedir(), ".assurgent");
 }
 
 /** Fail fast with clear errors if required config fields are missing or invalid. */
@@ -71,10 +77,12 @@ export function validateConfig(config: Config): void {
 
 /** Load and validate config from a JSON file. */
 export function loadConfig(configPath?: string): Config {
-  const resolved = configPath ?? path.resolve(import.meta.dir, "..", "config.json");
+  const resolved = configPath ?? path.join(getAssurgentHome(), "config.json");
 
   if (!fs.existsSync(resolved)) {
-    throw new Error(`Config file not found: ${resolved}`);
+    throw new Error(
+      `Config file not found: ${resolved}\nRun "assurgent init" to create one, or set ASSURGENT_HOME to point to an existing config directory.`,
+    );
   }
 
   const raw = JSON.parse(fs.readFileSync(resolved, "utf-8"));
