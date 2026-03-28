@@ -1,0 +1,26 @@
+{
+  "chat": {
+    "adapter": "telegram",
+    "telegram": {
+      "botToken": "123456:ABC-DEF...",
+      "allowedUserIds": ["YOUR_TELEGRAM_USER_ID"],
+      "placeholder": {
+        "enabled": true,
+        "text": "thinking..."
+      }
+    }
+  },
+  "agent": {
+    "adapter": "claude-code",
+    "claude-code": {
+      "model": "sonnet",
+      "maxTurns": 10,
+      "flags": ["--dangerously-skip-permissions"],
+      "claudePath": "claude"
+    }
+  },
+  "session": {
+    "turnLimit": 20
+  },
+  "workspacePath": "/path/to/your/workspace"
+}
