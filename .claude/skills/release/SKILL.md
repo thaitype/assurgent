@@ -7,7 +7,9 @@ description: Release a new version to npm and create a GitHub release. Invoke wi
 
 ## Arguments
 
-Exactly one of: `patch`, `minor`, `major`.
+Positional: exactly one of `patch`, `minor`, `major`.
+
+Optional: `--otp=<code>` — npm one-time password for publish. If not provided and npm requires OTP, ask the user for it.
 
 ## Workflow
 
@@ -35,9 +37,17 @@ git describe --tags --abbrev=0
 
 ### 4. Run release-it
 
+Always run with `--ci` to avoid interactive prompts. If an OTP was provided, pass it via `--npm.otp`:
+
 ```bash
-bun run release:<bump_type>
+# Without OTP
+npx release-it <bump_type> --ci
+
+# With OTP
+npx release-it <bump_type> --ci --npm.otp=<code>
 ```
+
+If the command fails with `EOTP` (OTP required) and no OTP was provided, ask the user for the code and retry.
 
 This handles: version bump in package.json, npm publish, git commit, git tag, git push.
 
