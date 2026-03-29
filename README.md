@@ -187,6 +187,26 @@ You can also use secret references directly in config values without enabling th
 
 Each provider has a user-chosen name (e.g. `"vault"`, `"my-env"`) and a `type` field (`"azure-keyvault"` or `"env"`). You can have multiple instances of the same type -- for example, separate Key Vaults for production and staging. Secrets are resolved once at startup from the configured provider.
 
+## Security Recommendations
+
+The coding agent (Claude Code) runs as a child process with filesystem and shell access. To reduce secret exposure:
+
+**Run assurgent as a non-root user.** Set service principal credentials (e.g. `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`) as system-level env vars owned by root or a dedicated service account. If the agent runs as a non-root user, it cannot read `/etc/environment` or root-owned systemd service configs.
+
+**Use `security.blacklistEnv`** to strip sensitive env vars from the agent's child process:
+
+```json
+{
+  "security": {
+    "blacklistEnv": ["AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"]
+  }
+}
+```
+
+**Prefer Azure Key Vault over env vars** for production. Env vars are convenient for development, but Key Vault provides access control, audit logging, and rotation. The agent never sees the vault credentials — assurgent resolves secrets at startup and only exposes them through the proxy.
+
+**Use the proxy whitelist** to limit which upstream servers receive your secrets. Even if the agent is tricked via prompt injection, secrets only flow to whitelisted domains.
+
 ## Config Reference
 
 | Field | Description |
