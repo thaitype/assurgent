@@ -9,7 +9,11 @@ const AUTH_RESPONSE_HEADERS = new Set(["authorization", "x-api-key", "x-api-secr
 export interface ProxyConfig {
   port?: number;
   bypassWhitelist?: boolean;
-  /** Domain list for allowed upstream hosts (e.g. ["googleapis.com"]). */
+  /**
+   * Allowed upstream targets.
+   * Each entry is either a domain (e.g. "googleapis.com") or host:port (e.g. "127.0.0.1:3000").
+   * Entry without ":" matches hostname only. Entry with ":" matches hostname:port.
+   */
   whitelist?: string[];
 }
 
@@ -65,13 +69,30 @@ export function stripAuthHeaders(headers: Headers): Record<string, string> {
 }
 
 /**
- * Check if a URL's hostname matches any domain in the whitelist.
- * Extracts the hostname from the URL and does exact domain matching.
+ * Derive the effective port for a URL.
+ * `new URL(...)` returns "" for default ports, so we fall back to scheme defaults.
+ */
+function effectivePort(parsed: URL): string {
+  if (parsed.port) return parsed.port;
+  if (parsed.protocol === "https:") return "443";
+  if (parsed.protocol === "http:") return "80";
+  return "";
+}
+
+/**
+ * Check if a URL matches any entry in the whitelist.
+ * Whitelist entries without ":" match hostname only.
+ * Whitelist entries with ":" match hostname:port.
  */
 export function isUrlAllowed(url: string, whitelist: string[]): boolean {
   try {
     const parsed = new URL(url);
-    return whitelist.some((domain) => parsed.hostname === domain);
+    return whitelist.some((entry) => {
+      if (entry.includes(":")) {
+        return `${parsed.hostname}:${effectivePort(parsed)}` === entry;
+      }
+      return parsed.hostname === entry;
+    });
   } catch {
     return false;
   }

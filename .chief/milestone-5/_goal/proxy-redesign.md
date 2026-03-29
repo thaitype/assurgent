@@ -11,7 +11,9 @@ The path-encoded URL approach (`/proxy/googleapis.com/path`) is fragile and awkw
 ## Key Decisions
 
 1. **Routing**: `x-assurgent-upstream` header replaces `/proxy/` prefix.
-2. **Whitelist**: Domain-only matching (no globs). Example: `["googleapis.com"]`.
+2. **Whitelist**: Domain or `host:port` matching (no globs). Examples: `["googleapis.com", "127.0.0.1:3000"]`.
+   - Entry without `:` -- match against hostname only (e.g. `"googleapis.com"`).
+   - Entry with `:` -- match against `hostname:port` (e.g. `"127.0.0.1:3000"`).
 3. **`bypassWhitelist`**: Kept, but logs WARNING on every proxied request when enabled.
 4. **Trailing path in header**: Allowed. Trim trailing `/` from header, trim leading `/` from path, join with `/`.
 5. **Missing header**: 400 with JSON error including a `hint` field.

@@ -38,7 +38,7 @@
   "proxy": {
     "port": 9090,
     "bypassWhitelist": false,
-    "whitelist": ["googleapis.com", "graph.microsoft.com"]
+    "whitelist": ["googleapis.com", "graph.microsoft.com", "127.0.0.1:3000"]
   },
   "workspacePath": "/path/to/your/workspace"
 }

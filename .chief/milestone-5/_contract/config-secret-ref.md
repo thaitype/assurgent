@@ -152,7 +152,7 @@ The proxy is optional. It only starts if the `proxy` config block exists.
 |---|---|---|---|
 | `proxy.port` | No | `9090` | Port the proxy listens on. |
 | `proxy.bypassWhitelist` | No | `false` | If `true`, all URLs allowed (dev only). Logs WARNING on **every proxied request**. |
-| `proxy.whitelist` | Yes (if bypassWhitelist is false) | -- | Domain list (not globs). Checked against hostname from `x-assurgent-upstream` header. |
+| `proxy.whitelist` | Yes (if bypassWhitelist is false) | -- | Allowed upstream targets. Each entry is either a domain (e.g. `"googleapis.com"`) or `host:port` (e.g. `"127.0.0.1:3000"`). Entry without `:` matches hostname only. Entry with `:` matches `hostname:port`. |
 
 ### Proxy routing
 
@@ -178,8 +178,10 @@ Examples:
 - The `x-assurgent-upstream` header is stripped before forwarding to upstream.
 
 **Whitelist checking:**
-- Extract hostname from the resolved upstream URL.
-- Match against `proxy.whitelist` domains (exact hostname match).
+- Extract hostname (and port, if present) from the resolved upstream URL.
+- For each whitelist entry:
+  - If entry contains `:`, match against `hostname:port` of the upstream URL.
+  - If entry has no `:`, match against hostname only.
 - `bypassWhitelist: true` skips the check but logs a WARNING per request.
 
 ### Proxy behavior (unchanged)

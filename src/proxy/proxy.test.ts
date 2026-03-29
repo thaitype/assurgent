@@ -149,6 +149,37 @@ describe("isUrlAllowed", () => {
   test("returns false for invalid URL", () => {
     expect(isUrlAllowed("not-a-url", ["googleapis.com"])).toBe(false);
   });
+
+  test("matches IP with port", () => {
+    expect(isUrlAllowed("http://127.0.0.1:3000/path", ["127.0.0.1:3000"])).toBe(true);
+  });
+
+  test("matches different IP with port", () => {
+    expect(isUrlAllowed("http://192.168.1.100:8080/api", ["192.168.1.100:8080"])).toBe(true);
+  });
+
+  test("rejects IP with wrong port", () => {
+    expect(isUrlAllowed("http://127.0.0.1:4000/path", ["127.0.0.1:3000"])).toBe(false);
+  });
+
+  test("rejects IP without port when whitelist requires port", () => {
+    expect(isUrlAllowed("http://127.0.0.1/path", ["127.0.0.1:3000"])).toBe(false);
+  });
+
+  test("mixed whitelist with domain and host:port", () => {
+    const whitelist = ["googleapis.com", "127.0.0.1:3000"];
+    expect(isUrlAllowed("https://googleapis.com/calendar", whitelist)).toBe(true);
+    expect(isUrlAllowed("http://127.0.0.1:3000/api", whitelist)).toBe(true);
+    expect(isUrlAllowed("http://127.0.0.1:4000/api", whitelist)).toBe(false);
+  });
+
+  test("matches default https port (443) for host:port entry", () => {
+    expect(isUrlAllowed("https://example.com/path", ["example.com:443"])).toBe(true);
+  });
+
+  test("matches default http port (80) for host:port entry", () => {
+    expect(isUrlAllowed("http://example.com/path", ["example.com:80"])).toBe(true);
+  });
 });
 
 describe("createProxy (live server)", () => {

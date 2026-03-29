@@ -109,7 +109,11 @@ Sessions persist across restarts in `~/.assurgent/state/sessions.json`.
 
 Assurgent includes a local proxy server that injects secrets into outgoing requests — so the AI agent never sees raw credentials.
 
-The proxy binds to `127.0.0.1` only, enforces a domain whitelist, and resolves `${{secretRef.*}}` handlebars in headers, query params, and request body before forwarding. The `x-assurgent-upstream` header is stripped and never forwarded to the upstream server.
+The proxy binds to `127.0.0.1` only, enforces a whitelist, and resolves `${{secretRef.*}}` handlebars in headers, query params, and request body before forwarding. The `x-assurgent-upstream` header is stripped and never forwarded to the upstream server.
+
+The whitelist supports two entry formats:
+- **Domain only** (e.g. `"googleapis.com"`) -- matches by hostname.
+- **Host:port** (e.g. `"127.0.0.1:3000"`) -- matches by hostname and port. Useful for local services.
 
 ### How it works
 
@@ -127,7 +131,7 @@ The proxy binds to `127.0.0.1` only, enforces a domain whitelist, and resolves `
   },
   "proxy": {
     "port": 9090,
-    "whitelist": ["googleapis.com", "graph.microsoft.com"]
+    "whitelist": ["googleapis.com", "graph.microsoft.com", "127.0.0.1:3000"]
   }
 }
 ```
@@ -210,7 +214,7 @@ Each provider has a user-chosen name (e.g. `"vault"`, `"my-env"`) and a `type` f
 | `session.turnLimit` | Pause after N turns, ask to extend or start new |
 | **Proxy** | |
 | `proxy.port` | Local proxy port (binds to 127.0.0.1) |
-| `proxy.whitelist` | Domain names allowed as upstream targets |
+| `proxy.whitelist` | Allowed upstream targets: domain names (e.g. `"googleapis.com"`) or host:port (e.g. `"127.0.0.1:3000"`) |
 | `proxy.bypassWhitelist` | Skip whitelist enforcement (default: `false`) |
 | **General** | |
 | `workspacePath` | Absolute path to workspace for Claude Code |
