@@ -5,17 +5,13 @@
   "bin": {
     "assurgent": "./cli.ts"
   },
-  "files": [
-    "cli.ts",
-    "src",
-    "config.example.json",
-    "README.md"
-  ],
+  "files": ["cli.ts", "src", "config.example.json", "README.md"],
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
+    "dev": "bun run --env-file .env --watch cli.ts",
+    "start": "bun run --env-file .env cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "lint": "biome check .",
@@ -25,6 +21,8 @@
     "release:major": "release-it major"
   },
   "dependencies": {
+    "@azure/identity": "^4.13.1",
+    "@azure/keyvault-secrets": "^4.10.0",
     "execa": "^9.5.2",
     "grammy": "^1.35.0"
   },

@@ -185,9 +185,9 @@ export class EnvProvider implements SecretProvider {
 
 ---
 
-## Provider Registration (Multi-Provider)
+## Provider Registration (Multi-Provider with User-Chosen Names)
 
-Providers are created based on the `secrets.providers` config block. Each entry maps to its own provider.
+Providers are created based on the `secrets.providers` config block. Each key is a **user-chosen instance name** and each value must contain a `type` field as the discriminator. Multiple instances of the same type are allowed.
 
 ```typescript
 // In loadConfig:
@@ -195,43 +195,90 @@ const raw = JSON.parse(configFile);
 
 if (raw.secrets) {
   const providers = createProviders(raw.secrets.providers);
-  const resolved = await resolveSecrets(raw, providers, raw.secrets.entries);
-  const config = resolved as Config;
-  validateConfig(config);
-  for (const provider of providers.values()) {
-    await provider.dispose?.();
-  }
-  return config;
+  // ... resolve secrets, validate, dispose ...
 }
-
-// No secrets block -- plain config, no resolution needed
-return validateConfig(raw);
 ```
 
 `loadConfig` is **always async** regardless of whether secrets exist.
 
+### Provider Config Shape
+
+Each provider entry is typed loosely:
+
+```typescript
+interface ProviderConfig {
+  type: string;
+  [key: string]: unknown;
+}
+```
+
+Runtime validation determines correctness based on `type`.
+
+### Provider Name Validation
+
+Provider instance names (the keys in `providers`) must match `[a-zA-Z0-9_-]+`. Invalid names cause a hard startup failure.
+
 ### `createProviders` factory
 
 ```typescript
-function createProviders(
-  providerConfigs: Record<string, unknown>
-): Map<string, SecretProvider> {
+const PROVIDER_NAME_RE = /^[a-zA-Z0-9_-]+$/;
+
+async function createProviders(
+  providerConfigs: Record<string, { type: string; [key: string]: unknown }>
+): Promise<Map<string, SecretProvider>> {
   const map = new Map<string, SecretProvider>();
-  for (const [name, config] of Object.entries(providerConfigs)) {
-    switch (name) {
-      case "azure-keyvault":
-        map.set(name, new AzureKeyVaultProvider(config as AzureKeyVaultProviderConfig));
+  for (const [instanceName, config] of Object.entries(providerConfigs)) {
+    // Validate instance name
+    if (!PROVIDER_NAME_RE.test(instanceName)) {
+      throw new Error(
+        `Invalid provider name "${instanceName}". Names must match [a-zA-Z0-9_-].`
+      );
+    }
+
+    // Validate type field exists
+    if (!config.type || typeof config.type !== "string") {
+      throw new Error(
+        `Provider "${instanceName}" is missing a "type" field.`
+      );
+    }
+
+    switch (config.type) {
+      case "azure-keyvault": {
+        const { AzureKeyVaultProvider } = await import("./azure-keyvault");
+        map.set(instanceName, new AzureKeyVaultProvider(config as AzureKeyVaultProviderConfig));
         break;
+      }
       case "env":
-        map.set(name, new EnvProvider());
+        map.set(instanceName, new EnvProvider());
         break;
       default:
-        throw new Error(`Unknown secret provider: "${name}"`);
+        throw new Error(`Unknown provider type "${config.type}" for provider "${instanceName}".`);
     }
   }
   return map;
 }
 ```
+
+### Example Config
+
+```json
+{
+  "secrets": {
+    "providers": {
+      "vault-prod": { "type": "azure-keyvault", "vaultUrl": "https://prod.vault.azure.net" },
+      "vault-staging": { "type": "azure-keyvault", "vaultUrl": "https://staging.vault.azure.net" },
+      "my-env": { "type": "env" }
+    },
+    "entries": {
+      "prodToken": { "provider": "vault-prod", "key": "token" },
+      "stagingToken": { "provider": "vault-staging", "key": "token" },
+      "localKey": { "provider": "my-env", "key": "LOCAL_API_KEY" }
+    }
+  }
+}
+```
+
+Entries reference provider instance names (not types).
 
 ---
 

@@ -12,7 +12,7 @@ You (Chat) → assurgent → Coding Agent → Response → You (Chat)
 
 Not an agent itself. A thin bridge with automatic session management, pluggable on both sides.
 
-### Currently Supported
+## Currently Supported
 
 | Chat Platform | Coding Agent |
 |---|---|
@@ -105,21 +105,138 @@ Session names are auto-generated from the date and first message (e.g. `2026-03-
 
 Sessions persist across restarts in `~/.assurgent/state/sessions.json`.
 
+## Secret Proxy
+
+Assurgent includes a local proxy server that injects secrets into outgoing requests — so the AI agent never sees raw credentials.
+
+The proxy binds to `127.0.0.1` only, enforces a whitelist, and resolves `${{secretRef.*}}` handlebars in headers, query params, and request body before forwarding. The `x-assurgent-upstream` header is stripped and never forwarded to the upstream server.
+
+The whitelist supports two entry formats:
+- **Domain only** (e.g. `"googleapis.com"`) -- matches by hostname.
+- **Host:port** (e.g. `"127.0.0.1:3000"`) -- matches by hostname and port. Useful for local services.
+
+### How it works
+
+1. Configure secrets and proxy in `config.json`:
+
+```json
+{
+  "secrets": {
+    "providers": {
+      "my-env": { "type": "env" }
+    },
+    "entries": {
+      "apiKey": { "provider": "my-env", "key": "MY_API_KEY" }
+    }
+  },
+  "proxy": {
+    "port": 9090,
+    "whitelist": ["googleapis.com", "graph.microsoft.com", "127.0.0.1:3000"]
+  }
+}
+```
+
+2. Set env vars (e.g. in `.env`):
+
+```bash
+MY_API_KEY=sk-your-real-key
+```
+
+3. Tell the AI agent to use the proxy by setting the `x-assurgent-upstream` header:
+
+```
+When calling Google Calendar, use http://127.0.0.1:9090 as the base URL
+and set the header x-assurgent-upstream: https://googleapis.com
+
+When calling Microsoft Graph, use http://127.0.0.1:9090 as the base URL
+and set the header x-assurgent-upstream: https://graph.microsoft.com
+```
+
+Example request the agent would make:
+
+```
+GET http://127.0.0.1:9090/calendar/v3/events
+x-assurgent-upstream: https://googleapis.com
+Authorization: Bearer ${{secretRef.apiKey}}
+```
+
+The proxy resolves handlebars, combines the upstream header with the request path, and forwards to `https://googleapis.com/calendar/v3/events`. Auth headers are stripped from responses.
+
+### Using secrets without the proxy
+
+You can also use secret references directly in config values without enabling the proxy:
+
+```json
+{
+  "secrets": {
+    "providers": {
+      "my-env": { "type": "env" },
+      "vault": { "type": "azure-keyvault", "vaultUrl": "https://my-vault.vault.azure.net" }
+    },
+    "entries": {
+      "botToken": { "provider": "vault", "key": "telegram-bot-token" }
+    }
+  },
+  "chat": {
+    "telegram": {
+      "botToken": "${{secretRef.botToken}}"
+    }
+  }
+}
+```
+
+Each provider has a user-chosen name (e.g. `"vault"`, `"my-env"`) and a `type` field (`"azure-keyvault"` or `"env"`). You can have multiple instances of the same type -- for example, separate Key Vaults for production and staging. Secrets are resolved once at startup from the configured provider.
+
+## Security Recommendations
+
+The coding agent (Claude Code) runs as a child process with filesystem and shell access. To reduce secret exposure:
+
+**Run assurgent as a non-root user.** Set service principal credentials (e.g. `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`) as system-level env vars owned by root or a dedicated service account. If the agent runs as a non-root user, it cannot read `/etc/environment` or root-owned systemd service configs.
+
+**Use `security.blacklistEnv`** to strip sensitive env vars from the agent's child process:
+
+```json
+{
+  "security": {
+    "blacklistEnv": ["AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"]
+  }
+}
+```
+
+**Prefer Azure Key Vault over env vars** for production. Env vars are convenient for development, but Key Vault provides access control, audit logging, and rotation. The agent never sees the vault credentials — assurgent resolves secrets at startup and only exposes them through the proxy.
+
+**Use the proxy whitelist** to limit which upstream servers receive your secrets. Even if the agent is tricked via prompt injection, secrets only flow to whitelisted domains.
+
 ## Config Reference
 
 | Field | Description |
 |---|---|
+| **Secrets** | |
+| `secrets.providers.<name>` | Named provider instance with `type` discriminator |
+| `secrets.providers.<name>.type` | Provider type: `"env"` or `"azure-keyvault"` |
+| `secrets.providers.<name>.vaultUrl` | Azure Key Vault URL (when type is `"azure-keyvault"`) |
+| `secrets.entries.<name>` | Named secret: `{ "provider": "<instance-name>", "key": "..." }` |
+| **Security** | |
+| `security.blacklistEnv` | Array of env var names to strip from child processes |
+| **Chat** | |
 | `chat.adapter` | Chat platform (`"telegram"`) |
-| `chat.telegram.botToken` | Telegram bot token |
+| `chat.telegram.botToken` | Telegram bot token (supports `${{secretRef.*}}`) |
 | `chat.telegram.allowedUserIds` | Array of allowed Telegram user IDs |
 | `chat.telegram.placeholder.enabled` | Show placeholder while agent thinks |
 | `chat.telegram.placeholder.text` | Placeholder text (default: `"thinking..."`) |
+| **Agent** | |
 | `agent.adapter` | Agent backend (`"claude-code"`) |
 | `agent.claude-code.model` | Default model (`"opus"`, `"sonnet"`, `"haiku"`) |
 | `agent.claude-code.maxTurns` | Max agent turns per invocation |
 | `agent.claude-code.flags` | Extra CLI flags |
 | `agent.claude-code.claudePath` | Path to `claude` binary (default: `"claude"`) |
+| **Session** | |
 | `session.turnLimit` | Pause after N turns, ask to extend or start new |
+| **Proxy** | |
+| `proxy.port` | Local proxy port (binds to 127.0.0.1) |
+| `proxy.whitelist` | Allowed upstream targets: domain names (e.g. `"googleapis.com"`) or host:port (e.g. `"127.0.0.1:3000"`) |
+| `proxy.bypassWhitelist` | Skip whitelist enforcement (default: `false`) |
+| **General** | |
 | `workspacePath` | Absolute path to workspace for Claude Code |
 
 ## Development
@@ -149,6 +266,23 @@ ChatAdapter (e.g. Telegram) → Wrapper Core → AgentAdapter (e.g. Claude Code 
 ```
 
 Both sides are pluggable interfaces. Adding a new chat platform or coding agent is just implementing an adapter — no changes to the core.
+
+### Claude Code Agent Setup
+
+This project includes Claude Code skills (`.claude/skills/`) for common workflows like releasing. If you want the agent to self-edit skills, add this to `.claude/settings.local.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Edit(.claude/skills/**)",
+      "Write(.claude/skills/**)",
+      "Update(.claude/skills/**)",
+      "Create(.claude/skills/**)"
+    ]
+  }
+}
+```
 
 ## License
 

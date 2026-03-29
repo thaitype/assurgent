@@ -66,21 +66,21 @@ The `Config` TypeScript interface does not change. After resolution, all handleb
 
 ## Multi-Provider Secrets Mapping
 
-Secrets support **multiple providers**. Each entry maps to a specific provider, allowing secrets to come from different sources (Key Vault, env vars, etc.).
+Secrets support **multiple named provider instances**. Each provider has a user-chosen name and a `type` field as discriminator. Multiple instances of the same type are allowed (e.g., two Key Vaults). Each entry maps to a specific provider instance.
 
 ```json
 {
   "secrets": {
     "providers": {
-      "azure-keyvault": {
-        "vaultUrl": "https://mild-bot-vault.vault.azure.net"
-      },
-      "env": {}
+      "vault-prod": { "type": "azure-keyvault", "vaultUrl": "https://prod.vault.azure.net" },
+      "vault-staging": { "type": "azure-keyvault", "vaultUrl": "https://staging.vault.azure.net" },
+      "my-env": { "type": "env" }
     },
     "entries": {
-      "telegramBotToken": { "provider": "azure-keyvault", "key": "telegram-bot-token" },
-      "googleCalendarToken": { "provider": "azure-keyvault", "key": "google-calendar-token" },
-      "devToken": { "provider": "env", "key": "DEV_TOKEN" }
+      "telegramBotToken": { "provider": "vault-prod", "key": "telegram-bot-token" },
+      "googleCalendarToken": { "provider": "vault-prod", "key": "google-calendar-token" },
+      "stagingToken": { "provider": "vault-staging", "key": "staging-token" },
+      "devToken": { "provider": "my-env", "key": "DEV_TOKEN" }
     }
   }
 }
@@ -88,11 +88,24 @@ Secrets support **multiple providers**. Each entry maps to a specific provider, 
 
 | Field | Required | Description |
 |---|---|---|
-| `providers` | Yes | Map of provider name to provider-specific config. |
-| `providers.<name>` | -- | Config object for that provider (shape varies by provider type). |
+| `providers` | Yes | Map of user-chosen instance name to provider config. |
+| `providers.<name>` | -- | Must contain `type` (string) plus type-specific fields. |
+| `providers.<name>.type` | Yes | Provider type discriminator: `"azure-keyvault"` or `"env"`. |
 | `entries` | Yes | Map of `handlebarName` to `{ provider, key }`. |
-| `entries.<name>.provider` | Yes | Which provider to resolve this secret from. Must match a key in `providers`. |
+| `entries.<name>.provider` | Yes | Which provider instance to resolve this secret from. Must match a key in `providers`. |
 | `entries.<name>.key` | Yes | The provider-specific secret key (e.g., Key Vault secret name, env var name). |
+
+### Provider Name Rules
+
+- Names must match `[a-zA-Z0-9_-]+`.
+- Invalid names cause hard startup failure.
+
+### Startup Validation (hard failures)
+
+- Unknown `type` value in any provider.
+- Missing `type` field in any provider.
+- Provider name violates `[a-zA-Z0-9_-]` pattern.
+- Entry references a provider name not in `providers`.
 
 ---
 
@@ -128,8 +141,8 @@ The proxy is optional. It only starts if the `proxy` config block exists.
     "port": 9090,
     "bypassWhitelist": false,
     "whitelist": [
-      "googleapis.com/calendar/v3/**",
-      "graph.microsoft.com/v1.0/me/calendar/**"
+      "googleapis.com",
+      "graph.microsoft.com"
     ]
   }
 }
@@ -138,12 +151,42 @@ The proxy is optional. It only starts if the `proxy` config block exists.
 | Field | Required | Default | Description |
 |---|---|---|---|
 | `proxy.port` | No | `9090` | Port the proxy listens on. |
-| `proxy.bypassWhitelist` | No | `false` | If `true`, all URLs allowed (dev only). |
-| `proxy.whitelist` | Yes (if bypassWhitelist is false) | -- | Glob patterns for allowed target URLs. |
+| `proxy.bypassWhitelist` | No | `false` | If `true`, all URLs allowed (dev only). Logs WARNING on **every proxied request**. |
+| `proxy.whitelist` | Yes (if bypassWhitelist is false) | -- | Allowed upstream targets. Each entry is either a domain (e.g. `"googleapis.com"`) or `host:port` (e.g. `"127.0.0.1:3000"`). Entry without `:` matches hostname only. Entry with `:` matches `hostname:port`. |
 
-### Proxy behavior
+### Proxy routing
 
-- Resolves `${{secretRef.*}}` handlebars in request **headers**, **URL query params**, and **request body**.
+Routing uses the `x-assurgent-upstream` header instead of path-encoded URLs.
+
+The agent sends requests to `http://127.0.0.1:<port>/<path>` with header `x-assurgent-upstream: <upstream-base-url>`.
+
+**URL construction:**
+1. Trim trailing `/` from header value.
+2. Trim leading `/` from request path.
+3. Join with `/`.
+
+Examples:
+- `https://googleapis.com` + `/calendar/v3/events` = `https://googleapis.com/calendar/v3/events`
+- `https://googleapis.com/v1/` + `/calendars/events` = `https://googleapis.com/v1/calendars/events`
+
+**Header rules:**
+- Missing header: 400 with `{"error": "Missing x-assurgent-upstream header", "hint": "Set the x-assurgent-upstream header to the target base URL, e.g. https://googleapis.com"}`
+- Duplicate header: 400 with clear JSON error.
+- No scheme in header: default to `https://`.
+- Handlebars (`${{secretRef.*}}`) NOT resolved in this header. It is a plain URL.
+- Query strings in header: NOT supported. Query params come from the request URL only.
+- The `x-assurgent-upstream` header is stripped before forwarding to upstream.
+
+**Whitelist checking:**
+- Extract hostname (and port, if present) from the resolved upstream URL.
+- For each whitelist entry:
+  - If entry contains `:`, match against `hostname:port` of the upstream URL.
+  - If entry has no `:`, match against hostname only.
+- `bypassWhitelist: true` skips the check but logs a WARNING per request.
+
+### Proxy behavior (unchanged)
+
+- Resolves `${{secretRef.*}}` handlebars in request **headers** (except `x-assurgent-upstream`), **URL query params**, and **request body**.
 - Strips auth headers from proxy **responses** (`Authorization`, `X-Api-Key`, etc.) to prevent secret leakage. Does not scan response body.
 - Binds to `127.0.0.1` only.
 - No per-secret URL scoping -- the whitelist is sufficient access control.
@@ -156,15 +199,13 @@ The proxy is optional. It only starts if the `proxy` config block exists.
 {
   "secrets": {
     "providers": {
-      "azure-keyvault": {
-        "vaultUrl": "https://mild-bot-vault.vault.azure.net"
-      },
-      "env": {}
+      "vault-prod": { "type": "azure-keyvault", "vaultUrl": "https://mild-bot-vault.vault.azure.net" },
+      "my-env": { "type": "env" }
     },
     "entries": {
-      "telegramBotToken": { "provider": "azure-keyvault", "key": "telegram-bot-token" },
-      "googleCalendarToken": { "provider": "azure-keyvault", "key": "google-calendar-token" },
-      "devToken": { "provider": "env", "key": "DEV_TOKEN" }
+      "telegramBotToken": { "provider": "vault-prod", "key": "telegram-bot-token" },
+      "googleCalendarToken": { "provider": "vault-prod", "key": "google-calendar-token" },
+      "devToken": { "provider": "my-env", "key": "DEV_TOKEN" }
     }
   },
   "security": {
@@ -196,8 +237,8 @@ The proxy is optional. It only starts if the `proxy` config block exists.
     "port": 9090,
     "bypassWhitelist": false,
     "whitelist": [
-      "googleapis.com/calendar/v3/**",
-      "graph.microsoft.com/v1.0/me/calendar/**"
+      "googleapis.com",
+      "graph.microsoft.com"
     ]
   },
   "workspacePath": "/home/mylucia/assurgent"

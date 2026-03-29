@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ClaudeCodeConfig } from "./claude-code";
-import { SUPPORTED_MODELS, buildArgs } from "./claude-code";
+import { SUPPORTED_MODELS, buildArgs, filterEnv } from "./claude-code";
 
 const baseConfig: ClaudeCodeConfig = {
   model: "opus",
@@ -84,5 +84,50 @@ describe("buildArgs", () => {
       appendPrompt: "extra",
     });
     expect(args[args.length - 1]).toBe("do the thing");
+  });
+});
+
+describe("filterEnv", () => {
+  test("removes blacklisted env vars", () => {
+    const env = {
+      PATH: "/usr/bin",
+      AZURE_CLIENT_SECRET: "secret-value",
+      HOME: "/home/user",
+    };
+    const result = filterEnv(env, ["AZURE_CLIENT_SECRET"]);
+    expect(result).toEqual({ PATH: "/usr/bin", HOME: "/home/user" });
+  });
+
+  test("passes all vars when blacklist is empty", () => {
+    const env = {
+      PATH: "/usr/bin",
+      HOME: "/home/user",
+    };
+    const result = filterEnv(env, []);
+    expect(result).toEqual({ PATH: "/usr/bin", HOME: "/home/user" });
+  });
+
+  test("removes multiple blacklisted vars", () => {
+    const env = {
+      PATH: "/usr/bin",
+      AZURE_CLIENT_ID: "id",
+      AZURE_CLIENT_SECRET: "secret",
+      AZURE_TENANT_ID: "tenant",
+      HOME: "/home/user",
+    };
+    const result = filterEnv(env, ["AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"]);
+    expect(result).toEqual({ PATH: "/usr/bin", HOME: "/home/user" });
+  });
+
+  test("handles blacklist with vars not in env", () => {
+    const env = { PATH: "/usr/bin" };
+    const result = filterEnv(env, ["NONEXISTENT_VAR"]);
+    expect(result).toEqual({ PATH: "/usr/bin" });
+  });
+
+  test("excludes undefined values", () => {
+    const env = { PATH: "/usr/bin", UNDEF: undefined } as NodeJS.ProcessEnv;
+    const result = filterEnv(env, []);
+    expect(result).toEqual({ PATH: "/usr/bin" });
   });
 });

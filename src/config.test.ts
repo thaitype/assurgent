@@ -64,44 +64,104 @@ describe("loadConfig", () => {
     process.env.ASSURGENT_HOME = undefined;
   });
 
-  function writeConfig(dir: string, config: Config): string {
+  function writeConfig(dir: string, config: unknown): string {
     const configPath = path.join(dir, "config.json");
     fs.writeFileSync(configPath, JSON.stringify(config), "utf-8");
     return configPath;
   }
 
-  test("reads config from explicit path", () => {
+  test("reads config from explicit path", async () => {
     const configPath = writeConfig(tempDir, validConfig());
-    const config = loadConfig(configPath);
+    const { config } = await loadConfig(configPath);
     expect(config.chat.adapter).toBe("telegram");
     expect(config.session.turnLimit).toBe(20);
   });
 
-  test("reads config from $ASSURGENT_HOME/config.json when no explicit path", () => {
+  test("reads config from $ASSURGENT_HOME/config.json when no explicit path", async () => {
     process.env.ASSURGENT_HOME = tempDir;
     writeConfig(tempDir, validConfig());
-    const config = loadConfig();
+    const { config } = await loadConfig();
     expect(config.chat.adapter).toBe("telegram");
   });
 
-  test("throws with helpful error when config is missing and explicit path given", () => {
+  test("throws with helpful error when config is missing and explicit path given", async () => {
     const missingPath = path.join(tempDir, "nonexistent.json");
-    expect(() => loadConfig(missingPath)).toThrow("Config file not found");
+    await expect(loadConfig(missingPath)).rejects.toThrow("Config file not found");
   });
 
-  test("throws mentioning 'assurgent init' when config is missing", () => {
+  test("throws mentioning 'assurgent init' when config is missing", async () => {
     const missingPath = path.join(tempDir, "nonexistent.json");
-    expect(() => loadConfig(missingPath)).toThrow("assurgent init");
+    await expect(loadConfig(missingPath)).rejects.toThrow("assurgent init");
   });
 
-  test("throws mentioning 'ASSURGENT_HOME' when config is missing", () => {
+  test("throws mentioning 'ASSURGENT_HOME' when config is missing", async () => {
     const missingPath = path.join(tempDir, "nonexistent.json");
-    expect(() => loadConfig(missingPath)).toThrow("ASSURGENT_HOME");
+    await expect(loadConfig(missingPath)).rejects.toThrow("ASSURGENT_HOME");
   });
 
-  test("throws with config path in error message when config is missing", () => {
+  test("throws with config path in error message when config is missing", async () => {
     process.env.ASSURGENT_HOME = tempDir;
-    expect(() => loadConfig()).toThrow(path.join(tempDir, "config.json"));
+    await expect(loadConfig()).rejects.toThrow(path.join(tempDir, "config.json"));
+  });
+
+  test("resolves secretRef handlebars when secrets block exists", async () => {
+    const originalEnv = process.env.TEST_BOT_TOKEN;
+    process.env.TEST_BOT_TOKEN = "resolved-bot-token";
+
+    try {
+      const rawConfig = {
+        ...validConfig(),
+        chat: {
+          adapter: "telegram",
+          telegram: {
+            botToken: "${{secretRef.telegramBotToken}}",
+            allowedUserIds: ["12345"],
+          },
+        },
+        secrets: {
+          providers: { "my-env": { type: "env" } },
+          entries: {
+            telegramBotToken: { provider: "my-env", key: "TEST_BOT_TOKEN" },
+          },
+        },
+      };
+
+      const configPath = writeConfig(tempDir, rawConfig);
+      const { config, resolvedSecrets } = await loadConfig(configPath);
+      expect(config.chat.telegram.botToken).toBe("resolved-bot-token");
+      expect(resolvedSecrets.telegramBotToken).toBe("resolved-bot-token");
+    } finally {
+      if (originalEnv === undefined) {
+        process.env.TEST_BOT_TOKEN = undefined;
+      } else {
+        process.env.TEST_BOT_TOKEN = originalEnv;
+      }
+    }
+  });
+
+  test("throws when handlebars exist but no secrets block", async () => {
+    const rawConfig = {
+      ...validConfig(),
+      chat: {
+        adapter: "telegram",
+        telegram: {
+          botToken: "${{secretRef.telegramBotToken}}",
+          allowedUserIds: ["12345"],
+        },
+      },
+    };
+
+    const configPath = writeConfig(tempDir, rawConfig);
+    await expect(loadConfig(configPath)).rejects.toThrow(
+      'Found ${{secretRef.*}} in config but no "secrets" block is defined.',
+    );
+  });
+
+  test("works with plain config without secrets block (backward compatible)", async () => {
+    const configPath = writeConfig(tempDir, validConfig());
+    const { config, resolvedSecrets } = await loadConfig(configPath);
+    expect(config.chat.telegram.botToken).toBe("123456:ABC-DEF");
+    expect(resolvedSecrets).toEqual({});
   });
 });
 
