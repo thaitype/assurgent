@@ -66,21 +66,21 @@ The `Config` TypeScript interface does not change. After resolution, all handleb
 
 ## Multi-Provider Secrets Mapping
 
-Secrets support **multiple providers**. Each entry maps to a specific provider, allowing secrets to come from different sources (Key Vault, env vars, etc.).
+Secrets support **multiple named provider instances**. Each provider has a user-chosen name and a `type` field as discriminator. Multiple instances of the same type are allowed (e.g., two Key Vaults). Each entry maps to a specific provider instance.
 
 ```json
 {
   "secrets": {
     "providers": {
-      "azure-keyvault": {
-        "vaultUrl": "https://mild-bot-vault.vault.azure.net"
-      },
-      "env": {}
+      "vault-prod": { "type": "azure-keyvault", "vaultUrl": "https://prod.vault.azure.net" },
+      "vault-staging": { "type": "azure-keyvault", "vaultUrl": "https://staging.vault.azure.net" },
+      "my-env": { "type": "env" }
     },
     "entries": {
-      "telegramBotToken": { "provider": "azure-keyvault", "key": "telegram-bot-token" },
-      "googleCalendarToken": { "provider": "azure-keyvault", "key": "google-calendar-token" },
-      "devToken": { "provider": "env", "key": "DEV_TOKEN" }
+      "telegramBotToken": { "provider": "vault-prod", "key": "telegram-bot-token" },
+      "googleCalendarToken": { "provider": "vault-prod", "key": "google-calendar-token" },
+      "stagingToken": { "provider": "vault-staging", "key": "staging-token" },
+      "devToken": { "provider": "my-env", "key": "DEV_TOKEN" }
     }
   }
 }
@@ -88,11 +88,24 @@ Secrets support **multiple providers**. Each entry maps to a specific provider, 
 
 | Field | Required | Description |
 |---|---|---|
-| `providers` | Yes | Map of provider name to provider-specific config. |
-| `providers.<name>` | -- | Config object for that provider (shape varies by provider type). |
+| `providers` | Yes | Map of user-chosen instance name to provider config. |
+| `providers.<name>` | -- | Must contain `type` (string) plus type-specific fields. |
+| `providers.<name>.type` | Yes | Provider type discriminator: `"azure-keyvault"` or `"env"`. |
 | `entries` | Yes | Map of `handlebarName` to `{ provider, key }`. |
-| `entries.<name>.provider` | Yes | Which provider to resolve this secret from. Must match a key in `providers`. |
+| `entries.<name>.provider` | Yes | Which provider instance to resolve this secret from. Must match a key in `providers`. |
 | `entries.<name>.key` | Yes | The provider-specific secret key (e.g., Key Vault secret name, env var name). |
+
+### Provider Name Rules
+
+- Names must match `[a-zA-Z0-9_-]+`.
+- Invalid names cause hard startup failure.
+
+### Startup Validation (hard failures)
+
+- Unknown `type` value in any provider.
+- Missing `type` field in any provider.
+- Provider name violates `[a-zA-Z0-9_-]` pattern.
+- Entry references a provider name not in `providers`.
 
 ---
 
@@ -184,15 +197,13 @@ Examples:
 {
   "secrets": {
     "providers": {
-      "azure-keyvault": {
-        "vaultUrl": "https://mild-bot-vault.vault.azure.net"
-      },
-      "env": {}
+      "vault-prod": { "type": "azure-keyvault", "vaultUrl": "https://mild-bot-vault.vault.azure.net" },
+      "my-env": { "type": "env" }
     },
     "entries": {
-      "telegramBotToken": { "provider": "azure-keyvault", "key": "telegram-bot-token" },
-      "googleCalendarToken": { "provider": "azure-keyvault", "key": "google-calendar-token" },
-      "devToken": { "provider": "env", "key": "DEV_TOKEN" }
+      "telegramBotToken": { "provider": "vault-prod", "key": "telegram-bot-token" },
+      "googleCalendarToken": { "provider": "vault-prod", "key": "google-calendar-token" },
+      "devToken": { "provider": "my-env", "key": "DEV_TOKEN" }
     }
   },
   "security": {

@@ -118,9 +118,11 @@ The proxy binds to `127.0.0.1` only, enforces a domain whitelist, and resolves `
 ```json
 {
   "secrets": {
-    "providers": { "env": {} },
+    "providers": {
+      "my-env": { "type": "env" }
+    },
     "entries": {
-      "apiKey": { "provider": "env", "key": "MY_API_KEY" }
+      "apiKey": { "provider": "my-env", "key": "MY_API_KEY" }
     }
   },
   "proxy": {
@@ -164,11 +166,11 @@ You can also use secret references directly in config values without enabling th
 {
   "secrets": {
     "providers": {
-      "env": {},
-      "azure-keyvault": { "vaultUrl": "https://my-vault.vault.azure.net" }
+      "my-env": { "type": "env" },
+      "vault": { "type": "azure-keyvault", "vaultUrl": "https://my-vault.vault.azure.net" }
     },
     "entries": {
-      "botToken": { "provider": "azure-keyvault", "key": "telegram-bot-token" }
+      "botToken": { "provider": "vault", "key": "telegram-bot-token" }
     }
   },
   "chat": {
@@ -179,17 +181,17 @@ You can also use secret references directly in config values without enabling th
 }
 ```
 
-Secrets are resolved once at startup from the configured provider.
+Each provider has a user-chosen name (e.g. `"vault"`, `"my-env"`) and a `type` field (`"azure-keyvault"` or `"env"`). You can have multiple instances of the same type -- for example, separate Key Vaults for production and staging. Secrets are resolved once at startup from the configured provider.
 
 ## Config Reference
 
 | Field | Description |
 |---|---|
 | **Secrets** | |
-| `secrets.providers` | Secret provider configs (`"env"`, `"azure-keyvault"`) |
-| `secrets.providers.env` | Reads from `process.env` (no config needed) |
-| `secrets.providers.azure-keyvault.vaultUrl` | Azure Key Vault URL |
-| `secrets.entries.<name>` | Named secret: `{ "provider": "...", "key": "..." }` |
+| `secrets.providers.<name>` | Named provider instance with `type` discriminator |
+| `secrets.providers.<name>.type` | Provider type: `"env"` or `"azure-keyvault"` |
+| `secrets.providers.<name>.vaultUrl` | Azure Key Vault URL (when type is `"azure-keyvault"`) |
+| `secrets.entries.<name>` | Named secret: `{ "provider": "<instance-name>", "key": "..." }` |
 | **Security** | |
 | `security.blacklistEnv` | Array of env var names to strip from child processes |
 | **Chat** | |

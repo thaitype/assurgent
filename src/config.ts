@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { SecretEntry } from "./secrets/resolver";
+import type { ProviderConfig, SecretEntry } from "./secrets/resolver";
 import {
   assertNoUnresolvedRefs,
   createProviders,
@@ -13,7 +13,7 @@ import {
 export interface Config {
   /** Multi-provider secrets configuration. Optional. */
   secrets?: {
-    providers: Record<string, unknown>;
+    providers: Record<string, ProviderConfig>;
     entries: Record<string, SecretEntry>;
   };
   /** Security settings. Optional. */

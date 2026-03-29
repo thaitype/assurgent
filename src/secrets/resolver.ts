@@ -3,6 +3,15 @@ import { HANDLEBAR_RE } from "./constants";
 import { EnvProvider } from "./env";
 import type { SecretProvider } from "./provider";
 
+/** Provider instance names must match this pattern. */
+const PROVIDER_NAME_RE = /^[a-zA-Z0-9_-]+$/;
+
+/** Shape of a provider config entry: type discriminator + type-specific fields. */
+export interface ProviderConfig {
+  type: string;
+  [key: string]: unknown;
+}
+
 /** Entry in the secrets.entries config map. */
 export interface SecretEntry {
   provider: string;
@@ -181,29 +190,44 @@ export function assertNoUnresolvedRefs(config: unknown): void {
 
 /**
  * Create provider instances from the secrets.providers config block.
- * Each key maps to a provider type. Unknown providers throw immediately.
+ * Each key is a user-chosen instance name; the `type` field discriminates
+ * which provider class to instantiate. Multiple instances of the same type
+ * are allowed.
  *
  * Azure Key Vault provider is loaded lazily via dynamic `import()` so
  * `@azure/identity` and `@azure/keyvault-secrets` are only pulled in
  * when actually configured.
  */
 export async function createProviders(
-  providerConfigs: Record<string, unknown>,
+  providerConfigs: Record<string, ProviderConfig>,
 ): Promise<Map<string, SecretProvider>> {
   const map = new Map<string, SecretProvider>();
-  for (const [name, config] of Object.entries(providerConfigs)) {
-    switch (name) {
+
+  for (const [instanceName, config] of Object.entries(providerConfigs)) {
+    if (!PROVIDER_NAME_RE.test(instanceName)) {
+      throw new Error(`Invalid provider name "${instanceName}". Names must match [a-zA-Z0-9_-].`);
+    }
+
+    if (!config.type || typeof config.type !== "string") {
+      throw new Error(`Provider "${instanceName}" is missing a "type" field.`);
+    }
+
+    switch (config.type) {
       case "azure-keyvault": {
         const { AzureKeyVaultProvider } = await import("./azure-keyvault");
-        map.set(name, new AzureKeyVaultProvider(config as AzureKeyVaultProviderConfig));
+        map.set(
+          instanceName,
+          new AzureKeyVaultProvider(config as unknown as AzureKeyVaultProviderConfig),
+        );
         break;
       }
       case "env":
-        map.set(name, new EnvProvider());
+        map.set(instanceName, new EnvProvider());
         break;
       default:
-        throw new Error(`Unknown secret provider: "${name}"`);
+        throw new Error(`Unknown provider type "${config.type}" for provider "${instanceName}".`);
     }
   }
+
   return map;
 }

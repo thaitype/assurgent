@@ -119,9 +119,9 @@ describe("loadConfig", () => {
           },
         },
         secrets: {
-          providers: { env: {} },
+          providers: { "my-env": { type: "env" } },
           entries: {
-            telegramBotToken: { provider: "env", key: "TEST_BOT_TOKEN" },
+            telegramBotToken: { provider: "my-env", key: "TEST_BOT_TOKEN" },
           },
         },
       };

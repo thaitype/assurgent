@@ -30,10 +30,10 @@ describe("config integration: full loadConfig pipeline", () => {
     try {
       const configPath = writeConfig({
         secrets: {
-          providers: { env: {} },
+          providers: { "my-env": { type: "env" } },
           entries: {
-            telegramBotToken: { provider: "env", key: "INTEG_BOT_TOKEN" },
-            apiKey: { provider: "env", key: "INTEG_API_KEY" },
+            telegramBotToken: { provider: "my-env", key: "INTEG_BOT_TOKEN" },
+            apiKey: { provider: "my-env", key: "INTEG_API_KEY" },
           },
         },
         chat: {
@@ -123,10 +123,10 @@ describe("config integration: full loadConfig pipeline", () => {
     );
   });
 
-  test("error: unknown provider in secrets config", async () => {
+  test("error: unknown provider type in secrets config", async () => {
     const configPath = writeConfig({
       secrets: {
-        providers: { "unknown-provider": {} },
+        providers: { "unknown-provider": { type: "nonexistent" } },
         entries: {
           mySecret: { provider: "unknown-provider", key: "test" },
         },
@@ -151,7 +151,7 @@ describe("config integration: full loadConfig pipeline", () => {
     });
 
     await expect(loadConfig(configPath)).rejects.toThrow(
-      'Unknown secret provider: "unknown-provider"',
+      'Unknown provider type "nonexistent" for provider "unknown-provider".',
     );
   });
 
@@ -161,9 +161,9 @@ describe("config integration: full loadConfig pipeline", () => {
 
     const configPath = writeConfig({
       secrets: {
-        providers: { env: {} },
+        providers: { "my-env": { type: "env" } },
         entries: {
-          missingSecret: { provider: "env", key: testKey },
+          missingSecret: { provider: "my-env", key: testKey },
         },
       },
       chat: {
@@ -232,9 +232,9 @@ describe("config integration: full loadConfig pipeline", () => {
     try {
       const configPath = writeConfig({
         secrets: {
-          providers: { env: {} },
+          providers: { "my-env": { type: "env" } },
           entries: {
-            partialToken: { provider: "env", key: "INTEG_PARTIAL_TOKEN" },
+            partialToken: { provider: "my-env", key: "INTEG_PARTIAL_TOKEN" },
           },
         },
         chat: {

@@ -96,35 +96,60 @@ describe("AzureKeyVaultProvider", () => {
 });
 
 describe("createProviders", () => {
-  test("creates env provider", async () => {
-    const providers = await createProviders({ env: {} });
-    expect(providers.has("env")).toBe(true);
-    expect(providers.get("env")?.name).toBe("env");
+  test("creates env provider with user-chosen name", async () => {
+    const providers = await createProviders({ "my-env": { type: "env" } });
+    expect(providers.has("my-env")).toBe(true);
+    expect(providers.get("my-env")?.name).toBe("env");
   });
 
-  test("creates azure-keyvault provider", async () => {
+  test("creates azure-keyvault provider with user-chosen name", async () => {
     const providers = await createProviders({
-      "azure-keyvault": {
+      "vault-prod": {
+        type: "azure-keyvault",
         vaultUrl: "https://test-vault.vault.azure.net",
       },
     });
-    expect(providers.has("azure-keyvault")).toBe(true);
-    expect(providers.get("azure-keyvault")?.name).toBe("azure-keyvault");
+    expect(providers.has("vault-prod")).toBe(true);
+    expect(providers.get("vault-prod")?.name).toBe("azure-keyvault");
   });
 
-  test("creates multiple providers", async () => {
+  test("creates multiple providers including same type twice", async () => {
     const providers = await createProviders({
-      env: {},
-      "azure-keyvault": {
-        vaultUrl: "https://test-vault.vault.azure.net",
+      "my-env": { type: "env" },
+      "vault-prod": {
+        type: "azure-keyvault",
+        vaultUrl: "https://prod.vault.azure.net",
+      },
+      "vault-staging": {
+        type: "azure-keyvault",
+        vaultUrl: "https://staging.vault.azure.net",
       },
     });
-    expect(providers.size).toBe(2);
+    expect(providers.size).toBe(3);
+    expect(providers.get("vault-prod")?.name).toBe("azure-keyvault");
+    expect(providers.get("vault-staging")?.name).toBe("azure-keyvault");
   });
 
-  test("throws for unknown provider", async () => {
-    await expect(createProviders({ "unknown-provider": {} })).rejects.toThrow(
-      'Unknown secret provider: "unknown-provider"',
+  test("throws for unknown provider type", async () => {
+    await expect(createProviders({ "my-provider": { type: "unknown" } })).rejects.toThrow(
+      'Unknown provider type "unknown" for provider "my-provider".',
     );
+  });
+
+  test("throws for missing type field", async () => {
+    await expect(createProviders({ "my-provider": {} as { type: string } })).rejects.toThrow(
+      'Provider "my-provider" is missing a "type" field.',
+    );
+  });
+
+  test("throws for invalid provider name", async () => {
+    await expect(createProviders({ "bad name!": { type: "env" } })).rejects.toThrow(
+      'Invalid provider name "bad name!"',
+    );
+  });
+
+  test("returns empty map for empty providers", async () => {
+    const providers = await createProviders({});
+    expect(providers.size).toBe(0);
   });
 });
