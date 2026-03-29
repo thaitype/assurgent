@@ -10,7 +10,8 @@
     "access": "public"
   },
   "scripts": {
-    "dev": "bun run --env-file .env --watch src/index.ts",
+    "dev": "bun run --env-file .env --watch cli.ts",
+    "start": "bun run --env-file .env cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "lint": "biome check .",
