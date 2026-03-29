@@ -3,7 +3,11 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
 export interface Session {
+  /** Locally generated UUID. Permanent key, never changes. */
+  id: string;
+  /** Human-friendly display label. Renameable. */
   name: string;
+  /** Claude Code's session ID for conversation continuity. */
   agentSessionId: string;
   chatId: string;
   createdAt: string;
@@ -16,35 +20,46 @@ export interface Session {
 }
 
 export interface SessionState {
+  /** Key = session id (UUID). Was keyed by name. */
   sessions: Record<string, Session>;
+  /** Key = chatId, value = session id (UUID). Was session name. */
   activeSession: Record<string, string>;
+  /** Key = chatId, value = slot map (slot -> session id). Was session name. */
+  pinnedSessions: Record<string, PinSlots>;
 }
+
+/** Maps slot number (1-3) to session id (UUID). */
+export type PinSlots = Record<string, string>;
 
 /**
  * Generate a session name from the first message.
- * Format: YYYY-MM-DD-<slug>
- * Slug: first ~30 chars, lowercase, non-alphanumeric (except Thai characters) replaced with hyphens,
+ * Format: <slug>-<4 random digits>
+ * Slug: first ~15 chars, lowercase, non-alphanumeric (except Thai characters) replaced with hyphens,
  * leading/trailing hyphens trimmed. Falls back to "session" if slug is empty.
+ * Total name max 20 characters.
  */
 export function generateSessionName(message: string): string {
-  const now = new Date();
-  const date = now.toISOString().slice(0, 10);
+  const digits = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
 
   const slug = message
-    .slice(0, 30)
+    .slice(0, 15)
     .toLowerCase()
     .replace(/[^a-z0-9ก-๙]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
   if (!slug) {
-    return `${date}-session`;
+    return `session-${digits}`;
   }
 
-  return `${date}-${slug}`;
+  // Ensure total length <= 20 chars: slug + "-" + 4 digits = slug max 15
+  const maxSlugLen = 20 - 1 - 4; // 15
+  const trimmedSlug = slug.slice(0, maxSlugLen).replace(/-+$/, "");
+
+  return `${trimmedSlug}-${digits}`;
 }
 
 export class SessionManager {
-  private state: SessionState = { sessions: {}, activeSession: {} };
+  private state: SessionState = { sessions: {}, activeSession: {}, pinnedSessions: {} };
   private loaded = false;
   private readonly sessionsFile: string;
 
@@ -59,18 +74,20 @@ export class SessionManager {
   resolveSession(chatId: string, message: string): Session {
     this.load();
 
-    const activeName = this.state.activeSession[chatId];
+    const activeId = this.state.activeSession[chatId];
 
-    if (activeName) {
-      const active = this.state.sessions[activeName];
+    if (activeId) {
+      const active = this.state.sessions[activeId];
       if (active) {
         return active;
       }
     }
 
+    const id = crypto.randomUUID();
     const name = generateSessionName(message);
     const now = new Date().toISOString();
     const session: Session = {
+      id,
       name,
       agentSessionId: "",
       chatId,
@@ -79,17 +96,17 @@ export class SessionManager {
       turnCount: 0,
     };
 
-    this.state.sessions[name] = session;
-    this.state.activeSession[chatId] = name;
+    this.state.sessions[id] = session;
+    this.state.activeSession[chatId] = id;
     this.save();
 
     return session;
   }
 
-  /** Merge updates into an existing session, then persist. */
-  updateSession(name: string, updates: Partial<Session>): void {
+  /** Merge updates into an existing session by id, then persist. */
+  updateSession(id: string, updates: Partial<Session>): void {
     this.load();
-    const session = this.state.sessions[name];
+    const session = this.state.sessions[id];
     if (!session) return;
     Object.assign(session, updates);
     this.save();
@@ -98,9 +115,9 @@ export class SessionManager {
   /** Extend the active session's turn limit by additionalTurns. */
   extendSession(chatId: string, additionalTurns: number, configTurnLimit: number): boolean {
     this.load();
-    const name = this.state.activeSession[chatId];
-    if (!name) return false;
-    const session = this.state.sessions[name];
+    const id = this.state.activeSession[chatId];
+    if (!id) return false;
+    const session = this.state.sessions[id];
     if (!session) return false;
 
     const currentLimit = session.override?.turnLimit ?? configTurnLimit;
@@ -112,9 +129,9 @@ export class SessionManager {
   /** Set or clear the model override for the active session. Returns false if no active session. */
   setModelOverride(chatId: string, model: string | undefined): boolean {
     this.load();
-    const name = this.state.activeSession[chatId];
-    if (!name) return false;
-    const session = this.state.sessions[name];
+    const id = this.state.activeSession[chatId];
+    if (!id) return false;
+    const session = this.state.sessions[id];
     if (!session) return false;
 
     if (model === undefined) {
@@ -144,33 +161,43 @@ export class SessionManager {
   }
 
   /**
-   * Set a named session as active for a chatId.
+   * Set a session as active for a chatId by session id.
    * Returns false if the session does not exist.
    */
-  setActive(chatId: string, name: string): boolean {
+  setActive(chatId: string, id: string): boolean {
     this.load();
-    if (!this.state.sessions[name]) return false;
-    this.state.activeSession[chatId] = name;
+    if (!this.state.sessions[id]) return false;
+    this.state.activeSession[chatId] = id;
     this.save();
     return true;
   }
 
+  /** Look up a session by its id. */
+  getSessionById(id: string): Session | undefined {
+    this.load();
+    return this.state.sessions[id];
+  }
+
+  /** Find a session by name and chatId. Linear scan, returns first match or undefined. */
+  findSessionByName(name: string, chatId: string): Session | undefined {
+    this.load();
+    return Object.values(this.state.sessions).find((s) => s.name === name && s.chatId === chatId);
+  }
+
   /**
    * Rename the active session for a chatId.
+   * Session stays at the same id key; only the name field changes.
    * Returns false if there is no active session.
    */
   renameActive(chatId: string, newName: string): boolean {
     this.load();
-    const activeName = this.state.activeSession[chatId];
-    if (!activeName) return false;
+    const activeId = this.state.activeSession[chatId];
+    if (!activeId) return false;
 
-    const session = this.state.sessions[activeName];
+    const session = this.state.sessions[activeId];
     if (!session) return false;
 
     session.name = newName;
-    delete this.state.sessions[activeName];
-    this.state.sessions[newName] = session;
-    this.state.activeSession[chatId] = newName;
     this.save();
     return true;
   }
@@ -178,9 +205,56 @@ export class SessionManager {
   /** Return the active session for a chatId, or undefined if none. */
   getActive(chatId: string): Session | undefined {
     this.load();
-    const name = this.state.activeSession[chatId];
-    if (!name) return undefined;
-    return this.state.sessions[name];
+    const id = this.state.activeSession[chatId];
+    if (!id) return undefined;
+    return this.state.sessions[id];
+  }
+
+  /**
+   * Pin a session to a quick-switch slot (1-3) for a chat.
+   * Accepts session name, resolves to id internally.
+   * Returns false if the session does not exist or slot is invalid.
+   */
+  pinSession(chatId: string, name: string, slot: number): boolean {
+    this.load();
+    if (slot < 1 || slot > 3) return false;
+
+    // Resolve name to session
+    const session = this.findSessionByName(name, chatId);
+    if (!session) return false;
+
+    if (!this.state.pinnedSessions[chatId]) {
+      this.state.pinnedSessions[chatId] = {};
+    }
+    this.state.pinnedSessions[chatId][String(slot)] = session.id;
+    this.save();
+    return true;
+  }
+
+  /** Return the pin slots for a chat. */
+  getPins(chatId: string): PinSlots {
+    this.load();
+    return this.state.pinnedSessions[chatId] ?? {};
+  }
+
+  /** Remove pins that reference sessions which no longer exist (by id). */
+  removeStalePins(chatId: string): void {
+    this.load();
+    const pins = this.state.pinnedSessions[chatId];
+    if (!pins) return;
+
+    let changed = false;
+    for (const slot of Object.keys(pins)) {
+      const sessionId = pins[slot];
+      if (!this.state.sessions[sessionId]) {
+        delete pins[slot];
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      this.save();
+    }
   }
 
   private load(): void {
@@ -189,9 +263,14 @@ export class SessionManager {
 
     try {
       const raw = readFileSync(this.sessionsFile, "utf-8");
-      this.state = JSON.parse(raw) as SessionState;
+      const parsed = JSON.parse(raw) as SessionState;
+      this.state = {
+        sessions: parsed.sessions ?? {},
+        activeSession: parsed.activeSession ?? {},
+        pinnedSessions: parsed.pinnedSessions ?? {},
+      };
     } catch {
-      this.state = { sessions: {}, activeSession: {} };
+      this.state = { sessions: {}, activeSession: {}, pinnedSessions: {} };
     }
   }
 

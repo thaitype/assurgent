@@ -1,4 +1,4 @@
-import { Bot } from "grammy";
+import { Bot, InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import type { ChatAdapter, IncomingMessage } from "../interfaces/chat-adapter";
 
@@ -37,6 +37,7 @@ export class TelegramAdapter implements ChatAdapter {
     string,
     (msg: IncomingMessage, args: string) => Promise<void>
   >();
+  private callbackQueryHandler?: (chatId: string, data: string) => Promise<void>;
 
   constructor(
     private config: {
@@ -63,6 +64,15 @@ export class TelegramAdapter implements ChatAdapter {
       if (this.messageHandler) {
         await this.messageHandler(this.toIncoming(ctx));
       }
+    });
+
+    this.bot.on("callback_query:data", async (ctx) => {
+      if (!this.isAllowed(ctx.from?.id)) return;
+      if (this.callbackQueryHandler) {
+        const chatId = String(ctx.chat?.id ?? "");
+        await this.callbackQueryHandler(chatId, ctx.callbackQuery.data);
+      }
+      await ctx.answerCallbackQuery();
     });
 
     this.bot.start();
@@ -117,6 +127,24 @@ export class TelegramAdapter implements ChatAdapter {
         await this.bot.api.sendMessage(Number(chatId), chunks[i]);
       }
     }
+  }
+
+  async sendInlineKeyboard(
+    chatId: string,
+    text: string,
+    buttons: Array<{ label: string; callbackData: string }>,
+  ): Promise<void> {
+    const keyboard = new InlineKeyboard();
+    for (const btn of buttons) {
+      keyboard.text(btn.label, btn.callbackData);
+    }
+    await this.bot.api.sendMessage(Number(chatId), text, {
+      reply_markup: keyboard,
+    });
+  }
+
+  onCallbackQuery(handler: (chatId: string, data: string) => Promise<void>): void {
+    this.callbackQueryHandler = handler;
   }
 
   private isAllowed(userId?: number): boolean {

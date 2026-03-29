@@ -49,6 +49,60 @@ export class Wrapper {
       console.log("[cmd] /model done");
     });
 
+    this.chat.onCommand("s", async (msg) => {
+      console.log(`[cmd] /s chatId=${msg.chatId}`);
+      this.sessions.removeStalePins(msg.chatId);
+      const pins = this.sessions.getPins(msg.chatId);
+      const slotKeys = Object.keys(pins).sort();
+
+      if (slotKeys.length === 0) {
+        await this.chat.sendText(
+          msg.chatId,
+          "No pinned sessions. Use `/session pin <name> <slot>` to pin one.",
+        );
+        console.log("[cmd] /s done (no pins)");
+        return;
+      }
+
+      const activeSession = this.sessions.getActive(msg.chatId);
+      const buttons: Array<{ label: string; callbackData: string }> = [];
+      for (const slot of slotKeys) {
+        const sessionId = pins[slot];
+        const session = this.sessions.getSessionById(sessionId);
+        if (!session) continue;
+        const label = session.id === activeSession?.id ? `> ${session.name}` : session.name;
+        buttons.push({ label, callbackData: `pin:${session.id}` });
+      }
+
+      if (buttons.length === 0) {
+        await this.chat.sendText(
+          msg.chatId,
+          "No pinned sessions. Use `/session pin <name> <slot>` to pin one.",
+        );
+        console.log("[cmd] /s done (no valid pins)");
+        return;
+      }
+
+      await this.chat.sendInlineKeyboard(msg.chatId, "Quick switch:", buttons);
+      console.log(`[cmd] /s done (${buttons.length} buttons)`);
+    });
+
+    this.chat.onCallbackQuery(async (chatId, data) => {
+      console.log(`[callback] chatId=${chatId} data="${data}"`);
+      if (data.startsWith("pin:")) {
+        const sessionId = data.slice(4);
+        const session = this.sessions.getSessionById(sessionId);
+        if (session) {
+          this.sessions.setActive(chatId, session.id);
+          this.pausedChats.delete(chatId);
+          await this.chat.sendText(chatId, `Resumed session: ${session.name}`);
+        } else {
+          await this.chat.sendText(chatId, "Session not found.");
+        }
+        console.log(`[callback] pin resume found=${!!session}`);
+      }
+    });
+
     this.chat.onCommand("help", async (msg) => {
       console.log(`[cmd] /help chatId=${msg.chatId}`);
       await this.chat.sendText(
@@ -61,7 +115,9 @@ export class Wrapper {
           "/session list — List all sessions",
           "/session resume <name> — Resume a session",
           "/session rename <name> — Rename current session",
+          "/session pin <name> <slot> — Pin session to quick-switch slot (1-3)",
           "/session info — Current session info",
+          "/s — Quick-switch between pinned sessions",
           "/help — This message",
         ].join("\n"),
       );
@@ -116,7 +172,7 @@ export class Wrapper {
 
       const newTurnCount = session.turnCount + 1;
 
-      this.sessions.updateSession(session.name, {
+      this.sessions.updateSession(session.id, {
         agentSessionId: response.sessionId,
         lastMessageAt: new Date().toISOString(),
         turnCount: newTurnCount,
@@ -177,13 +233,37 @@ export class Wrapper {
       }
       case "resume": {
         this.pausedChats.delete(msg.chatId);
-        const found = this.sessions.setActive(msg.chatId, value);
-        if (found) {
+        const resumeSession = this.sessions.findSessionByName(value, msg.chatId);
+        if (resumeSession) {
+          this.sessions.setActive(msg.chatId, resumeSession.id);
           await this.chat.sendText(msg.chatId, `Resumed session: ${value}`);
         } else {
           await this.chat.sendText(msg.chatId, `Session "${value}" not found.`);
         }
-        console.log(`[cmd] /session resume found=${found}`);
+        console.log(`[cmd] /session resume found=${!!resumeSession}`);
+        break;
+      }
+      case "pin": {
+        const pinArgs = value.trim().split(/\s+/);
+        const pinName = pinArgs.slice(0, -1).join(" ");
+        const slotStr = pinArgs[pinArgs.length - 1];
+        const slot = Number.parseInt(slotStr, 10);
+
+        if (!pinName || Number.isNaN(slot) || slot < 1 || slot > 3) {
+          await this.chat.sendText(
+            msg.chatId,
+            "Usage: /session pin <name> <slot>\nSlot must be 1, 2, or 3.",
+          );
+          break;
+        }
+
+        const pinned = this.sessions.pinSession(msg.chatId, pinName, slot);
+        if (pinned) {
+          await this.chat.sendText(msg.chatId, `Pinned ${pinName} to slot ${slot}.`);
+        } else {
+          await this.chat.sendText(msg.chatId, "Session not found.");
+        }
+        console.log(`[cmd] /session pin pinned=${pinned}`);
         break;
       }
       case "rename": {

@@ -91,6 +91,8 @@ Default: `~/.assurgent/`
 | `/session info` | Show current session details |
 | `/session resume <name>` | Resume a session by name |
 | `/session rename <name>` | Rename current session |
+| `/session pin <name> <slot>` | Pin a session to quick-switch slot (1-3) |
+| `/s` | Show pinned sessions as inline keyboard buttons |
 | `/help` | Show all commands |
 
 Any other text is forwarded to the coding agent in the current session.
@@ -101,7 +103,15 @@ Sessions resume automatically until you start a new one with `/new`.
 
 When turns reach the configured `turnLimit`, the bot pauses and asks you to `/extend` or `/new`.
 
-Session names are auto-generated from the date and first message (e.g. `2026-03-27-fix-bug`). Override the model per-session with `/model opus` — persists until reset or new session.
+Session names are auto-generated from the first message (e.g. `fix-bug-4821`, max 20 chars). Override the model per-session with `/model opus` — persists until reset or new session.
+
+Pin your most-used sessions for quick switching:
+
+```
+/session pin fix-bug-4821 1
+/session pin api-work-7392 2
+/s                              ← tap a button to switch
+```
 
 Sessions persist across restarts in `~/.assurgent/state/sessions.json`.
 
