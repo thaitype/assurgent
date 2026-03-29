@@ -63,6 +63,16 @@ describe("resolveHeaders", () => {
     expect(resolved.host).toBeUndefined();
     expect(resolved.authorization).toBe("Bearer my-secret-token");
   });
+
+  test("skips the x-assurgent-upstream header", () => {
+    const headers = new Headers({
+      "x-assurgent-upstream": "https://googleapis.com",
+      Authorization: "Bearer ${{secretRef.token}}",
+    });
+    const resolved = resolveHeaders(headers, secrets);
+    expect(resolved["x-assurgent-upstream"]).toBeUndefined();
+    expect(resolved.authorization).toBe("Bearer my-secret-token");
+  });
 });
 
 describe("stripAuthHeaders", () => {
@@ -107,96 +117,103 @@ describe("stripAuthHeaders", () => {
 });
 
 describe("isUrlAllowed", () => {
-  test("matches exact URL", () => {
-    expect(
-      isUrlAllowed("googleapis.com/calendar/v3/events", ["googleapis.com/calendar/v3/**"]),
-    ).toBe(true);
+  test("matches exact domain", () => {
+    expect(isUrlAllowed("https://googleapis.com/calendar/v3/events", ["googleapis.com"])).toBe(
+      true,
+    );
   });
 
-  test("rejects non-matching URL", () => {
-    expect(isUrlAllowed("evil.com/steal-data", ["googleapis.com/calendar/v3/**"])).toBe(false);
+  test("rejects non-matching domain", () => {
+    expect(isUrlAllowed("https://evil.com/steal-data", ["googleapis.com"])).toBe(false);
   });
 
-  test("matches against multiple patterns", () => {
-    const whitelist = ["googleapis.com/calendar/v3/**", "graph.microsoft.com/v1.0/me/calendar/**"];
-    expect(isUrlAllowed("graph.microsoft.com/v1.0/me/calendar/events", whitelist)).toBe(true);
+  test("matches against multiple domains", () => {
+    const whitelist = ["googleapis.com", "graph.microsoft.com"];
+    expect(isUrlAllowed("https://graph.microsoft.com/v1.0/me/calendar/events", whitelist)).toBe(
+      true,
+    );
   });
 
   test("rejects when whitelist is empty", () => {
-    expect(isUrlAllowed("anything.com/path", [])).toBe(false);
+    expect(isUrlAllowed("https://anything.com/path", [])).toBe(false);
   });
 
-  test("matches URL with http:// prefix against pattern without protocol", () => {
-    expect(
-      isUrlAllowed("http://googleapis.com/calendar/v3/events", ["googleapis.com/calendar/v3/**"]),
-    ).toBe(true);
+  test("matches URL with http scheme", () => {
+    expect(isUrlAllowed("http://googleapis.com/calendar/v3/events", ["googleapis.com"])).toBe(true);
   });
 
-  test("matches URL with https:// prefix against pattern without protocol", () => {
-    expect(
-      isUrlAllowed("https://googleapis.com/calendar/v3/events", ["googleapis.com/calendar/v3/**"]),
-    ).toBe(true);
+  test("rejects subdomain mismatch", () => {
+    expect(isUrlAllowed("https://sub.googleapis.com/path", ["googleapis.com"])).toBe(false);
   });
 
-  test("matches URL without protocol against pattern with protocol", () => {
-    expect(
-      isUrlAllowed("googleapis.com/calendar/v3/events", ["https://googleapis.com/calendar/v3/**"]),
-    ).toBe(true);
+  test("returns false for invalid URL", () => {
+    expect(isUrlAllowed("not-a-url", ["googleapis.com"])).toBe(false);
   });
 });
 
 describe("createProxy (live server)", () => {
-  let proxy: ProxyServer;
+  test("returns 400 for missing x-assurgent-upstream header", async () => {
+    const proxy = createProxy({ port: 0, bypassWhitelist: true }, {});
+    try {
+      const res = await fetch(`http://127.0.0.1:${proxy.port}/some-path`);
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { error: string; hint: string };
+      expect(json.error).toBe("Missing x-assurgent-upstream header");
+      expect(json.hint).toContain("x-assurgent-upstream");
+    } finally {
+      proxy.stop();
+    }
+  });
 
-  test("returns 404 for non-proxy paths", async () => {
-    proxy = createProxy({ port: 0, bypassWhitelist: true }, {});
-    const res = await fetch(`http://127.0.0.1:${proxy.port}/not-proxy/test`);
-    expect(res.status).toBe(404);
-    proxy.stop();
+  test("returns 400 for duplicate x-assurgent-upstream header", async () => {
+    const proxy = createProxy({ port: 0, bypassWhitelist: true }, {});
+    try {
+      const res = await fetch(`http://127.0.0.1:${proxy.port}/path`, {
+        headers: {
+          "x-assurgent-upstream": "https://a.com, https://b.com",
+        },
+      });
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { error: string };
+      expect(json.error).toContain("Duplicate");
+    } finally {
+      proxy.stop();
+    }
   });
 
   test("returns 403 for URLs not in whitelist", async () => {
-    proxy = createProxy({ port: 0, whitelist: ["allowed.com/**"] }, {});
-    const res = await fetch(`http://127.0.0.1:${proxy.port}/proxy/blocked.com/path`);
-    expect(res.status).toBe(403);
-    const json = (await res.json()) as { error: string };
-    expect(json.error).toContain("not in whitelist");
-    proxy.stop();
-  });
-
-  test("strips auth headers from proxied response", async () => {
-    proxy = createProxy(
-      {
-        port: 0,
-        bypassWhitelist: true,
-      },
-      {},
-    );
-
-    // We need to test against the real target but the proxy prepends https://
-    // For this test, use the proxy's error handling to verify header stripping
-    // Instead, let's just test the stripAuthHeaders function directly (done above)
-    // and test the proxy's 403 and 500 paths
-    proxy.stop();
+    const proxy = createProxy({ port: 0, whitelist: ["allowed.com"] }, {});
+    try {
+      const res = await fetch(`http://127.0.0.1:${proxy.port}/path`, {
+        headers: { "x-assurgent-upstream": "https://blocked.com" },
+      });
+      expect(res.status).toBe(403);
+      const json = (await res.json()) as { error: string };
+      expect(json.error).toContain("not in whitelist");
+    } finally {
+      proxy.stop();
+    }
   });
 
   test("returns 500 for unknown secretRef in request", async () => {
-    proxy = createProxy({ port: 0, bypassWhitelist: true }, {});
-    const res = await fetch(`http://127.0.0.1:${proxy.port}/proxy/example.com/test`, {
-      headers: {
-        Authorization: "Bearer ${{secretRef.unknown}}",
-      },
-    });
-    expect(res.status).toBe(500);
-    const json = (await res.json()) as { error: string };
-    expect(json.error).toContain("Unknown secretRef");
-    proxy.stop();
+    const proxy = createProxy({ port: 0, bypassWhitelist: true }, {});
+    try {
+      const res = await fetch(`http://127.0.0.1:${proxy.port}/test`, {
+        headers: {
+          "x-assurgent-upstream": "https://example.com",
+          Authorization: "Bearer ${{secretRef.unknown}}",
+        },
+      });
+      expect(res.status).toBe(500);
+      const json = (await res.json()) as { error: string };
+      expect(json.error).toContain("Unknown secretRef");
+    } finally {
+      proxy.stop();
+    }
   });
 
-  test("does not start proxy when bypassWhitelist logs warning", () => {
-    // This test verifies the proxy can be created with bypassWhitelist
-    // The warning is logged to console (verified manually)
-    proxy = createProxy({ port: 0, bypassWhitelist: true }, { token: "secret-value" });
+  test("can be created with bypassWhitelist", () => {
+    const proxy = createProxy({ port: 0, bypassWhitelist: true }, { token: "secret-value" });
     expect(proxy.port).toBeGreaterThan(0);
     proxy.stop();
   });

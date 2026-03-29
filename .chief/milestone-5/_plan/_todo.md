@@ -9,3 +9,6 @@
 - [x] task-7: Integration tests for secret resolution and proxy
 - [x] task-8: Fix double secret resolution in loadConfig (bug from review)
 - [x] task-9: Fix release readiness issues (BLOCKER-1, WARNING-2, WARNING-4, NOTE-3)
+- [x] task-10: Rewrite proxy routing to use x-assurgent-upstream header
+- [x] task-11: Update all proxy tests for header-based routing
+- [x] task-12: Update config.example.json and Config type for new proxy whitelist

@@ -109,7 +109,7 @@ Sessions persist across restarts in `~/.assurgent/state/sessions.json`.
 
 Assurgent includes a local proxy server that injects secrets into outgoing requests — so the AI agent never sees raw credentials.
 
-The proxy binds to `127.0.0.1` only, enforces a URL whitelist, and resolves `${{secretRef.*}}` handlebars in headers, query params, and request body before forwarding.
+The proxy binds to `127.0.0.1` only, enforces a domain whitelist, and resolves `${{secretRef.*}}` handlebars in headers, query params, and request body before forwarding. The `x-assurgent-upstream` header is stripped and never forwarded to the upstream server.
 
 ### How it works
 
@@ -125,7 +125,7 @@ The proxy binds to `127.0.0.1` only, enforces a URL whitelist, and resolves `${{
   },
   "proxy": {
     "port": 9090,
-    "whitelist": ["googleapis.com/**", "graph.microsoft.com/**"]
+    "whitelist": ["googleapis.com", "graph.microsoft.com"]
   }
 }
 ```
@@ -136,15 +136,25 @@ The proxy binds to `127.0.0.1` only, enforces a URL whitelist, and resolves `${{
 MY_API_KEY=sk-your-real-key
 ```
 
-3. Tell the AI agent to route requests through the proxy:
+3. Tell the AI agent to use the proxy by setting the `x-assurgent-upstream` header:
 
 ```
-Use http://127.0.0.1:9090/googleapis.com/calendar/v3/... instead of calling the Google Calendar API directly.
-When calling Microsoft Graph, use http://127.0.0.1:9090/graph.microsoft.com/v1.0/... as the base URL.
-All external API requests should go through http://127.0.0.1:9090/<target-host>/...
+When calling Google Calendar, use http://127.0.0.1:9090 as the base URL
+and set the header x-assurgent-upstream: https://googleapis.com
+
+When calling Microsoft Graph, use http://127.0.0.1:9090 as the base URL
+and set the header x-assurgent-upstream: https://graph.microsoft.com
 ```
 
-The agent sends requests to the proxy, which resolves secrets and forwards them to the real API. Auth headers are stripped from responses.
+Example request the agent would make:
+
+```
+GET http://127.0.0.1:9090/calendar/v3/events
+x-assurgent-upstream: https://googleapis.com
+Authorization: Bearer ${{secretRef.apiKey}}
+```
+
+The proxy resolves handlebars, combines the upstream header with the request path, and forwards to `https://googleapis.com/calendar/v3/events`. Auth headers are stripped from responses.
 
 ### Using secrets without the proxy
 
@@ -198,7 +208,7 @@ Secrets are resolved once at startup from the configured provider.
 | `session.turnLimit` | Pause after N turns, ask to extend or start new |
 | **Proxy** | |
 | `proxy.port` | Local proxy port (binds to 127.0.0.1) |
-| `proxy.whitelist` | Glob patterns for allowed upstream URLs |
+| `proxy.whitelist` | Domain names allowed as upstream targets |
 | `proxy.bypassWhitelist` | Skip whitelist enforcement (default: `false`) |
 | **General** | |
 | `workspacePath` | Absolute path to workspace for Claude Code |

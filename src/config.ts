@@ -49,6 +49,7 @@ export interface Config {
   proxy?: {
     port?: number;
     bypassWhitelist?: boolean;
+    /** Domain list for allowed upstream hosts. Exact hostname match, no globs. Example: ["googleapis.com"] */
     whitelist?: string[];
   };
   /** Absolute path to the workspace directory Claude Code runs in. */

@@ -128,8 +128,8 @@ The proxy is optional. It only starts if the `proxy` config block exists.
     "port": 9090,
     "bypassWhitelist": false,
     "whitelist": [
-      "googleapis.com/calendar/v3/**",
-      "graph.microsoft.com/v1.0/me/calendar/**"
+      "googleapis.com",
+      "graph.microsoft.com"
     ]
   }
 }
@@ -138,12 +138,40 @@ The proxy is optional. It only starts if the `proxy` config block exists.
 | Field | Required | Default | Description |
 |---|---|---|---|
 | `proxy.port` | No | `9090` | Port the proxy listens on. |
-| `proxy.bypassWhitelist` | No | `false` | If `true`, all URLs allowed (dev only). |
-| `proxy.whitelist` | Yes (if bypassWhitelist is false) | -- | Glob patterns for allowed target URLs. |
+| `proxy.bypassWhitelist` | No | `false` | If `true`, all URLs allowed (dev only). Logs WARNING on **every proxied request**. |
+| `proxy.whitelist` | Yes (if bypassWhitelist is false) | -- | Domain list (not globs). Checked against hostname from `x-assurgent-upstream` header. |
 
-### Proxy behavior
+### Proxy routing
 
-- Resolves `${{secretRef.*}}` handlebars in request **headers**, **URL query params**, and **request body**.
+Routing uses the `x-assurgent-upstream` header instead of path-encoded URLs.
+
+The agent sends requests to `http://127.0.0.1:<port>/<path>` with header `x-assurgent-upstream: <upstream-base-url>`.
+
+**URL construction:**
+1. Trim trailing `/` from header value.
+2. Trim leading `/` from request path.
+3. Join with `/`.
+
+Examples:
+- `https://googleapis.com` + `/calendar/v3/events` = `https://googleapis.com/calendar/v3/events`
+- `https://googleapis.com/v1/` + `/calendars/events` = `https://googleapis.com/v1/calendars/events`
+
+**Header rules:**
+- Missing header: 400 with `{"error": "Missing x-assurgent-upstream header", "hint": "Set the x-assurgent-upstream header to the target base URL, e.g. https://googleapis.com"}`
+- Duplicate header: 400 with clear JSON error.
+- No scheme in header: default to `https://`.
+- Handlebars (`${{secretRef.*}}`) NOT resolved in this header. It is a plain URL.
+- Query strings in header: NOT supported. Query params come from the request URL only.
+- The `x-assurgent-upstream` header is stripped before forwarding to upstream.
+
+**Whitelist checking:**
+- Extract hostname from the resolved upstream URL.
+- Match against `proxy.whitelist` domains (exact hostname match).
+- `bypassWhitelist: true` skips the check but logs a WARNING per request.
+
+### Proxy behavior (unchanged)
+
+- Resolves `${{secretRef.*}}` handlebars in request **headers** (except `x-assurgent-upstream`), **URL query params**, and **request body**.
 - Strips auth headers from proxy **responses** (`Authorization`, `X-Api-Key`, etc.) to prevent secret leakage. Does not scan response body.
 - Binds to `127.0.0.1` only.
 - No per-secret URL scoping -- the whitelist is sufficient access control.
@@ -196,8 +224,8 @@ The proxy is optional. It only starts if the `proxy` config block exists.
     "port": 9090,
     "bypassWhitelist": false,
     "whitelist": [
-      "googleapis.com/calendar/v3/**",
-      "graph.microsoft.com/v1.0/me/calendar/**"
+      "googleapis.com",
+      "graph.microsoft.com"
     ]
   },
   "workspacePath": "/home/mylucia/assurgent"

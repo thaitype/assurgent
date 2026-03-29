@@ -24,13 +24,11 @@
     "@azure/identity": "^4.13.1",
     "@azure/keyvault-secrets": "^4.10.0",
     "execa": "^9.5.2",
-    "grammy": "^1.35.0",
-    "picomatch": "^4.0.4"
+    "grammy": "^1.35.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/bun": "latest",
-    "@types/picomatch": "^4.0.2",
     "release-it": "^19.2.4",
     "typescript": "^5.8.2"
   }

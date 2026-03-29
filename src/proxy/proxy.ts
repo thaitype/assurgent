@@ -1,5 +1,7 @@
-import picomatch from "picomatch";
 import { HANDLEBAR_RE } from "../secrets/constants";
+
+/** Header name used to specify the upstream base URL. */
+const UPSTREAM_HEADER = "x-assurgent-upstream";
 
 /** Headers stripped from proxy responses to prevent secret leakage. */
 const AUTH_RESPONSE_HEADERS = new Set(["authorization", "x-api-key", "x-api-secret"]);
@@ -7,6 +9,7 @@ const AUTH_RESPONSE_HEADERS = new Set(["authorization", "x-api-key", "x-api-secr
 export interface ProxyConfig {
   port?: number;
   bypassWhitelist?: boolean;
+  /** Domain list for allowed upstream hosts (e.g. ["googleapis.com"]). */
   whitelist?: string[];
 }
 
@@ -32,7 +35,7 @@ export function resolveHandlebars(text: string, resolvedSecrets: Record<string, 
 
 /**
  * Resolve handlebars in request headers.
- * Skips the "host" header since it will be set for the target.
+ * Skips the "host" and "x-assurgent-upstream" headers.
  */
 export function resolveHeaders(
   headers: Headers,
@@ -41,6 +44,7 @@ export function resolveHeaders(
   const resolved: Record<string, string> = {};
   for (const [key, value] of headers.entries()) {
     if (key === "host") continue;
+    if (key === UPSTREAM_HEADER) continue;
     resolved[key] = resolveHandlebars(value, resolvedSecrets);
   }
   return resolved;
@@ -60,25 +64,44 @@ export function stripAuthHeaders(headers: Headers): Record<string, string> {
   return clean;
 }
 
-/** Strip http:// or https:// protocol prefix from a URL string. */
-function stripProtocol(url: string): string {
-  return url.replace(/^https?:\/\//, "");
+/**
+ * Check if a URL's hostname matches any domain in the whitelist.
+ * Extracts the hostname from the URL and does exact domain matching.
+ */
+export function isUrlAllowed(url: string, whitelist: string[]): boolean {
+  try {
+    const parsed = new URL(url);
+    return whitelist.some((domain) => parsed.hostname === domain);
+  } catch {
+    return false;
+  }
 }
 
 /**
- * Check if a URL matches any pattern in the whitelist.
- * Strips protocol prefixes from both the URL and patterns before matching
- * so that `http://example.com/path` matches a pattern like `example.com/path/**`.
- * Uses picomatch for glob matching.
+ * Construct the target URL from the upstream header value and the request path.
+ * Trims trailing / from upstream, trims leading / from path, joins with /.
  */
-export function isUrlAllowed(url: string, whitelist: string[]): boolean {
-  const normalizedUrl = stripProtocol(url);
-  return whitelist.some((pattern) => picomatch.isMatch(normalizedUrl, stripProtocol(pattern)));
+function buildTargetUrl(upstream: string, pathname: string, resolvedQuery: string): string {
+  const trimmedUpstream = upstream.replace(/\/+$/, "");
+  const trimmedPath = pathname.replace(/^\/+/, "");
+  const target = trimmedPath ? `${trimmedUpstream}/${trimmedPath}` : trimmedUpstream;
+  return `${target}${resolvedQuery}`;
+}
+
+/**
+ * Ensure the upstream value has a scheme. Defaults to https:// if missing.
+ */
+function ensureScheme(upstream: string): string {
+  if (/^https?:\/\//i.test(upstream)) {
+    return upstream;
+  }
+  return `https://${upstream}`;
 }
 
 /**
  * Create and start the secret proxy server.
  * Binds to 127.0.0.1 only.
+ * Routes requests using the x-assurgent-upstream header.
  * Resolves ${{secretRef.*}} in request headers, query params, and body.
  * Strips auth headers from responses.
  */
@@ -89,32 +112,54 @@ export function createProxy(
   const port = config.port ?? 9090;
   const whitelist = config.whitelist ?? [];
 
-  if (config.bypassWhitelist) {
-    console.warn(
-      "WARNING: Proxy bypassWhitelist is enabled. All target URLs are allowed. Use only for development.",
-    );
-  }
-
   const server = Bun.serve({
     port,
     hostname: "127.0.0.1",
     async fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
-      const pathAfterProxy = url.pathname.replace(/^\/proxy\//, "");
 
-      if (!url.pathname.startsWith("/proxy/")) {
-        return new Response(JSON.stringify({ error: "Proxy requests must use /proxy/ prefix." }), {
-          status: 404,
-          headers: { "content-type": "application/json" },
-        });
+      // Read x-assurgent-upstream header
+      const upstreamRaw = req.headers.get(UPSTREAM_HEADER);
+
+      if (upstreamRaw === null) {
+        return new Response(
+          JSON.stringify({
+            error: "Missing x-assurgent-upstream header",
+            hint: "Set the x-assurgent-upstream header to the target base URL, e.g. https://googleapis.com",
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        );
+      }
+
+      // Detect duplicate headers (comma-separated values indicate multiple)
+      if (upstreamRaw.includes(",")) {
+        return new Response(
+          JSON.stringify({
+            error: "Duplicate x-assurgent-upstream header. Provide exactly one upstream URL.",
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        );
+      }
+
+      const upstream = ensureScheme(upstreamRaw.trim());
+
+      // Build target URL
+      const resolvedQuery = url.search ? resolveHandlebars(url.search, resolvedSecrets) : "";
+      const targetUrl = buildTargetUrl(upstream, url.pathname, resolvedQuery);
+
+      // Log warning on every request when bypassWhitelist is enabled
+      if (config.bypassWhitelist) {
+        console.warn(
+          `WARNING: bypassWhitelist is enabled. Proxying request to ${targetUrl} without whitelist check.`,
+        );
       }
 
       // Check whitelist
       if (!config.bypassWhitelist) {
-        if (!isUrlAllowed(pathAfterProxy, whitelist)) {
+        if (!isUrlAllowed(targetUrl, whitelist)) {
           return new Response(
             JSON.stringify({
-              error: `URL not in whitelist: ${pathAfterProxy}`,
+              error: `URL not in whitelist: ${targetUrl}`,
             }),
             { status: 403, headers: { "content-type": "application/json" } },
           );
@@ -122,10 +167,7 @@ export function createProxy(
       }
 
       try {
-        // Resolve handlebars in query string
-        const resolvedQuery = url.search ? resolveHandlebars(url.search, resolvedSecrets) : "";
-
-        // Resolve handlebars in headers
+        // Resolve handlebars in headers (x-assurgent-upstream is already skipped)
         const resolvedReqHeaders = resolveHeaders(req.headers, resolvedSecrets);
 
         // Resolve handlebars in body
@@ -136,12 +178,6 @@ export function createProxy(
             body = resolveHandlebars(rawBody, resolvedSecrets);
           }
         }
-
-        // Default to https:// unless the path already includes a protocol
-        const hasProtocol = /^https?:\/\//.test(pathAfterProxy);
-        const targetUrl = hasProtocol
-          ? `${pathAfterProxy}${resolvedQuery}`
-          : `https://${pathAfterProxy}${resolvedQuery}`;
 
         const res = await fetch(targetUrl, {
           method: req.method,

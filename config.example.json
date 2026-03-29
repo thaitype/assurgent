@@ -43,7 +43,7 @@
   "proxy": {
     "port": 9090,
     "bypassWhitelist": false,
-    "whitelist": ["googleapis.com/calendar/v3/**", "graph.microsoft.com/v1.0/me/calendar/**"]
+    "whitelist": ["googleapis.com", "graph.microsoft.com"]
   },
   "workspacePath": "/path/to/your/workspace"
 }
