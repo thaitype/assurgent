@@ -5,38 +5,45 @@ import path from "node:path";
 import { SessionManager, generateSessionName } from "./session-manager";
 
 describe("generateSessionName", () => {
-  test("produces YYYY-MM-DD-slug format", () => {
+  test("produces slug-XXXX format with 4 random digits", () => {
     const name = generateSessionName("hello world");
-    expect(name).toMatch(/^\d{4}-\d{2}-\d{2}-.+$/);
+    expect(name).toMatch(/^hello-world-\d{4}$/);
   });
 
   test("slugifies: lowercase and replaces non-alphanumeric with hyphens", () => {
-    const name = generateSessionName("Hello World! Fix Bug");
-    const slug = name.split(/^\d{4}-\d{2}-\d{2}-/)[1];
-    expect(slug).toBe("hello-world-fix-bug");
+    const name = generateSessionName("Hello World!");
+    // Remove the trailing -XXXX to check slug
+    const slug = name.replace(/-\d{4}$/, "");
+    expect(slug).toBe("hello-world");
   });
 
   test("keeps Thai characters in the slug", () => {
     const name = generateSessionName("เพิ่ม dark mode");
-    const slug = name.split(/^\d{4}-\d{2}-\d{2}-/)[1];
-    expect(slug).toContain("เพิ่ม");
+    expect(name).toContain("เพิ่ม");
+    expect(name).toMatch(/-\d{4}$/);
   });
 
   test("handles empty string input", () => {
     const name = generateSessionName("");
-    expect(name).toMatch(/^\d{4}-\d{2}-\d{2}-session$/);
+    expect(name).toMatch(/^session-\d{4}$/);
   });
 
   test("handles whitespace-only input", () => {
     const name = generateSessionName("   ");
-    expect(name).toMatch(/^\d{4}-\d{2}-\d{2}-session$/);
+    expect(name).toMatch(/^session-\d{4}$/);
   });
 
-  test("truncates long messages to ~30 chars before slugifying", () => {
-    const longMessage = "this is a very long message that exceeds thirty characters easily";
+  test("total length is at most 20 characters", () => {
+    const longMessage = "this is a very long message that exceeds fifteen characters easily";
     const name = generateSessionName(longMessage);
-    const slug = name.split(/^\d{4}-\d{2}-\d{2}-/)[1];
-    expect(slug).toBe("this-is-a-very-long-message-th");
+    expect(name.length).toBeLessThanOrEqual(20);
+    expect(name).toMatch(/-\d{4}$/);
+  });
+
+  test("truncates slug to fit within 20 char limit", () => {
+    const name = generateSessionName("abcdefghijklmno"); // exactly 15 chars
+    expect(name.length).toBeLessThanOrEqual(20);
+    expect(name).toMatch(/-\d{4}$/);
   });
 });
 
@@ -58,7 +65,7 @@ describe("SessionManager", () => {
     expect(session.chatId).toBe("chat-1");
     expect(session.turnCount).toBe(0);
     expect(session.agentSessionId).toBe("");
-    expect(session.name).toMatch(/^\d{4}-\d{2}-\d{2}-hello-world$/);
+    expect(session.name).toMatch(/^hello-world-\d{4}$/);
   });
 
   test("resolveSession returns existing active session", () => {
@@ -152,5 +159,66 @@ describe("SessionManager", () => {
     expect(list.length).toBe(2);
     expect(list[0].name).toBe(s2.name);
     expect(list[1].name).toBe(s1.name);
+  });
+
+  test("getPins returns empty object for chat with no pins", () => {
+    const pins = manager.getPins("chat-1");
+    expect(pins).toEqual({});
+  });
+
+  test("pinSession returns true for valid session and slot", () => {
+    const session = manager.resolveSession("chat-1", "test");
+    const result = manager.pinSession("chat-1", session.name, 1);
+    expect(result).toBe(true);
+
+    const pins = manager.getPins("chat-1");
+    expect(pins["1"]).toBe(session.name);
+  });
+
+  test("pinSession returns false for non-existent session", () => {
+    const result = manager.pinSession("chat-1", "nonexistent", 1);
+    expect(result).toBe(false);
+  });
+
+  test("pinSession returns false for invalid slot", () => {
+    const session = manager.resolveSession("chat-1", "test");
+    expect(manager.pinSession("chat-1", session.name, 0)).toBe(false);
+    expect(manager.pinSession("chat-1", session.name, 4)).toBe(false);
+  });
+
+  test("pinSession overwrites existing slot assignment", () => {
+    const s1 = manager.resolveSession("chat-1", "first");
+    manager.archiveActive("chat-1");
+    const s2 = manager.resolveSession("chat-1", "second");
+
+    manager.pinSession("chat-1", s1.name, 1);
+    manager.pinSession("chat-1", s2.name, 1);
+
+    const pins = manager.getPins("chat-1");
+    expect(pins["1"]).toBe(s2.name);
+  });
+
+  test("removeStalePins keeps pins referencing existing sessions", () => {
+    const session = manager.resolveSession("chat-1", "test");
+    manager.pinSession("chat-1", session.name, 1);
+
+    manager.removeStalePins("chat-1");
+    const pins = manager.getPins("chat-1");
+    expect(pins["1"]).toBe(session.name);
+  });
+
+  test("removeStalePins cleans up references to deleted sessions", () => {
+    // Create a session, pin it, then rename it so the old name no longer exists
+    const session = manager.resolveSession("chat-1", "test");
+    manager.pinSession("chat-1", session.name, 1);
+    const oldName = session.name;
+
+    // Rename changes the key in sessions map, making the old name stale
+    manager.renameActive("chat-1", "renamed");
+
+    manager.removeStalePins("chat-1");
+    const pins = manager.getPins("chat-1");
+    // The pin referenced oldName which no longer exists
+    expect(pins["1"]).toBeUndefined();
   });
 });

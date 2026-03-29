@@ -5,12 +5,7 @@
   "bin": {
     "assurgent": "./cli.ts"
   },
-  "files": [
-    "cli.ts",
-    "src",
-    "config.example.json",
-    "README.md"
-  ],
+  "files": ["cli.ts", "src", "config.example.json", "README.md"],
   "publishConfig": {
     "access": "public"
   },
