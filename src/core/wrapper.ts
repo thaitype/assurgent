@@ -65,12 +65,23 @@ export class Wrapper {
       }
 
       const activeSession = this.sessions.getActive(msg.chatId);
-      const activeName = activeSession?.name;
-      const buttons = slotKeys.map((slot) => {
-        const name = pins[slot];
-        const label = name === activeName ? `> ${name}` : name;
-        return { label, callbackData: `pin:${name}` };
-      });
+      const buttons: Array<{ label: string; callbackData: string }> = [];
+      for (const slot of slotKeys) {
+        const sessionId = pins[slot];
+        const session = this.sessions.getSessionById(sessionId);
+        if (!session) continue;
+        const label = session.id === activeSession?.id ? `> ${session.name}` : session.name;
+        buttons.push({ label, callbackData: `pin:${session.id}` });
+      }
+
+      if (buttons.length === 0) {
+        await this.chat.sendText(
+          msg.chatId,
+          "No pinned sessions. Use `/session pin <name> <slot>` to pin one.",
+        );
+        console.log("[cmd] /s done (no valid pins)");
+        return;
+      }
 
       await this.chat.sendInlineKeyboard(msg.chatId, "Quick switch:", buttons);
       console.log(`[cmd] /s done (${buttons.length} buttons)`);
@@ -79,15 +90,16 @@ export class Wrapper {
     this.chat.onCallbackQuery(async (chatId, data) => {
       console.log(`[callback] chatId=${chatId} data="${data}"`);
       if (data.startsWith("pin:")) {
-        const name = data.slice(4);
-        const found = this.sessions.setActive(chatId, name);
-        if (found) {
+        const sessionId = data.slice(4);
+        const session = this.sessions.getSessionById(sessionId);
+        if (session) {
+          this.sessions.setActive(chatId, session.id);
           this.pausedChats.delete(chatId);
-          await this.chat.sendText(chatId, `Resumed session: ${name}`);
+          await this.chat.sendText(chatId, `Resumed session: ${session.name}`);
         } else {
           await this.chat.sendText(chatId, "Session not found.");
         }
-        console.log(`[callback] pin resume found=${found}`);
+        console.log(`[callback] pin resume found=${!!session}`);
       }
     });
 
@@ -160,7 +172,7 @@ export class Wrapper {
 
       const newTurnCount = session.turnCount + 1;
 
-      this.sessions.updateSession(session.name, {
+      this.sessions.updateSession(session.id, {
         agentSessionId: response.sessionId,
         lastMessageAt: new Date().toISOString(),
         turnCount: newTurnCount,
@@ -221,13 +233,14 @@ export class Wrapper {
       }
       case "resume": {
         this.pausedChats.delete(msg.chatId);
-        const found = this.sessions.setActive(msg.chatId, value);
-        if (found) {
+        const resumeSession = this.sessions.findSessionByName(value, msg.chatId);
+        if (resumeSession) {
+          this.sessions.setActive(msg.chatId, resumeSession.id);
           await this.chat.sendText(msg.chatId, `Resumed session: ${value}`);
         } else {
           await this.chat.sendText(msg.chatId, `Session "${value}" not found.`);
         }
-        console.log(`[cmd] /session resume found=${found}`);
+        console.log(`[cmd] /session resume found=${!!resumeSession}`);
         break;
       }
       case "pin": {
