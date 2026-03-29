@@ -1,11 +1,16 @@
 {
   "name": "assurgent",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "type": "module",
   "bin": {
     "assurgent": "./cli.ts"
   },
-  "files": ["cli.ts", "src", "config.example.json", "README.md"],
+  "files": [
+    "cli.ts",
+    "src",
+    "config.example.json",
+    "README.md"
+  ],
   "publishConfig": {
     "access": "public"
   },
