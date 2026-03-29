@@ -8,6 +8,8 @@ export interface ClaudeCodeConfig {
   maxTurns: number;
   flags: string[];
   claudePath?: string;
+  /** Env var names to strip from child process environment. */
+  blacklistEnv?: string[];
 }
 
 /**
@@ -45,6 +47,21 @@ export function buildArgs(config: ClaudeCodeConfig, options: AgentInvokeOptions)
   return args;
 }
 
+/**
+ * Filter environment variables by removing blacklisted keys.
+ * Returns a new object with only non-blacklisted vars that have defined values.
+ */
+export function filterEnv(env: NodeJS.ProcessEnv, blacklist: string[]): Record<string, string> {
+  const blocked = new Set(blacklist);
+  const safeEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (!blocked.has(key) && value !== undefined) {
+      safeEnv[key] = value;
+    }
+  }
+  return safeEnv;
+}
+
 /** AgentAdapter implementation backed by the Claude Code CLI. */
 export class ClaudeCodeAdapter implements AgentAdapter {
   readonly name = "claude-code";
@@ -57,12 +74,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   async invoke(options: AgentInvokeOptions): Promise<AgentResponse> {
     const args = buildArgs(this.config, options);
 
+    const safeEnv = filterEnv(process.env, this.config.blacklistEnv ?? []);
+
     const proc = await execa(this.config.claudePath ?? "claude", args, {
       cwd: this.workspacePath,
       timeout: 180_000,
       stdin: "ignore",
       env: {
-        ...process.env,
+        ...safeEnv,
         AGENT_SESSION_ID: options.sessionId ?? "",
       },
     });

@@ -12,7 +12,7 @@ You (Chat) → assurgent → Coding Agent → Response → You (Chat)
 
 Not an agent itself. A thin bridge with automatic session management, pluggable on both sides.
 
-### Currently Supported
+## Currently Supported
 
 | Chat Platform | Coding Agent |
 |---|---|
@@ -105,21 +105,102 @@ Session names are auto-generated from the date and first message (e.g. `2026-03-
 
 Sessions persist across restarts in `~/.assurgent/state/sessions.json`.
 
+## Secret Proxy
+
+Assurgent includes a local proxy server that injects secrets into outgoing requests — so the AI agent never sees raw credentials.
+
+The proxy binds to `127.0.0.1` only, enforces a URL whitelist, and resolves `${{secretRef.*}}` handlebars in headers, query params, and request body before forwarding.
+
+### How it works
+
+1. Configure secrets and proxy in `config.json`:
+
+```json
+{
+  "secrets": {
+    "providers": { "env": {} },
+    "entries": {
+      "apiKey": { "provider": "env", "key": "MY_API_KEY" }
+    }
+  },
+  "proxy": {
+    "port": 9090,
+    "whitelist": ["googleapis.com/**", "graph.microsoft.com/**"]
+  }
+}
+```
+
+2. Set env vars (e.g. in `.env`):
+
+```bash
+MY_API_KEY=sk-your-real-key
+```
+
+3. Tell the AI agent to route requests through the proxy:
+
+```
+Use http://127.0.0.1:9090/googleapis.com/calendar/v3/... instead of calling the Google Calendar API directly.
+When calling Microsoft Graph, use http://127.0.0.1:9090/graph.microsoft.com/v1.0/... as the base URL.
+All external API requests should go through http://127.0.0.1:9090/<target-host>/...
+```
+
+The agent sends requests to the proxy, which resolves secrets and forwards them to the real API. Auth headers are stripped from responses.
+
+### Using secrets without the proxy
+
+You can also use secret references directly in config values without enabling the proxy:
+
+```json
+{
+  "secrets": {
+    "providers": {
+      "env": {},
+      "azure-keyvault": { "vaultUrl": "https://my-vault.vault.azure.net" }
+    },
+    "entries": {
+      "botToken": { "provider": "azure-keyvault", "key": "telegram-bot-token" }
+    }
+  },
+  "chat": {
+    "telegram": {
+      "botToken": "${{secretRef.botToken}}"
+    }
+  }
+}
+```
+
+Secrets are resolved once at startup from the configured provider.
+
 ## Config Reference
 
 | Field | Description |
 |---|---|
+| **Secrets** | |
+| `secrets.providers` | Secret provider configs (`"env"`, `"azure-keyvault"`) |
+| `secrets.providers.env` | Reads from `process.env` (no config needed) |
+| `secrets.providers.azure-keyvault.vaultUrl` | Azure Key Vault URL |
+| `secrets.entries.<name>` | Named secret: `{ "provider": "...", "key": "..." }` |
+| **Security** | |
+| `security.blacklistEnv` | Array of env var names to strip from child processes |
+| **Chat** | |
 | `chat.adapter` | Chat platform (`"telegram"`) |
-| `chat.telegram.botToken` | Telegram bot token |
+| `chat.telegram.botToken` | Telegram bot token (supports `${{secretRef.*}}`) |
 | `chat.telegram.allowedUserIds` | Array of allowed Telegram user IDs |
 | `chat.telegram.placeholder.enabled` | Show placeholder while agent thinks |
 | `chat.telegram.placeholder.text` | Placeholder text (default: `"thinking..."`) |
+| **Agent** | |
 | `agent.adapter` | Agent backend (`"claude-code"`) |
 | `agent.claude-code.model` | Default model (`"opus"`, `"sonnet"`, `"haiku"`) |
 | `agent.claude-code.maxTurns` | Max agent turns per invocation |
 | `agent.claude-code.flags` | Extra CLI flags |
 | `agent.claude-code.claudePath` | Path to `claude` binary (default: `"claude"`) |
+| **Session** | |
 | `session.turnLimit` | Pause after N turns, ask to extend or start new |
+| **Proxy** | |
+| `proxy.port` | Local proxy port (binds to 127.0.0.1) |
+| `proxy.whitelist` | Glob patterns for allowed upstream URLs |
+| `proxy.bypassWhitelist` | Skip whitelist enforcement (default: `false`) |
+| **General** | |
 | `workspacePath` | Absolute path to workspace for Claude Code |
 
 ## Development
@@ -149,6 +230,23 @@ ChatAdapter (e.g. Telegram) → Wrapper Core → AgentAdapter (e.g. Claude Code 
 ```
 
 Both sides are pluggable interfaces. Adding a new chat platform or coding agent is just implementing an adapter — no changes to the core.
+
+### Claude Code Agent Setup
+
+This project includes Claude Code skills (`.claude/skills/`) for common workflows like releasing. If you want the agent to self-edit skills, add this to `.claude/settings.local.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Edit(.claude/skills/**)",
+      "Write(.claude/skills/**)",
+      "Update(.claude/skills/**)",
+      "Create(.claude/skills/**)"
+    ]
+  }
+}
+```
 
 ## License
 

@@ -1,9 +1,26 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { SecretEntry } from "./secrets/resolver";
+import {
+  assertNoUnresolvedRefs,
+  createProviders,
+  hasSecretRefs,
+  substituteSecrets,
+} from "./secrets/resolver";
 
 /** Runtime configuration for the bot. */
 export interface Config {
+  /** Multi-provider secrets configuration. Optional. */
+  secrets?: {
+    providers: Record<string, unknown>;
+    entries: Record<string, SecretEntry>;
+  };
+  /** Security settings. Optional. */
+  security?: {
+    /** Env var names to strip from child process environment. */
+    blacklistEnv?: string[];
+  };
   chat: {
     adapter: "telegram";
     telegram: {
@@ -27,6 +44,12 @@ export interface Config {
   };
   session: {
     turnLimit: number;
+  };
+  /** Proxy configuration. Optional -- proxy only starts if this block exists. */
+  proxy?: {
+    port?: number;
+    bypassWhitelist?: boolean;
+    whitelist?: string[];
   };
   /** Absolute path to the workspace directory Claude Code runs in. */
   workspacePath: string;
@@ -75,8 +98,15 @@ export function validateConfig(config: Config): void {
   }
 }
 
-/** Load and validate config from a JSON file. */
-export function loadConfig(configPath?: string): Config {
+/** Result of loading config, including resolved secrets for proxy use. */
+export interface LoadConfigResult {
+  config: Config;
+  /** Resolved secrets keyed by handlebar name (e.g., "telegramBotToken" -> "actual-value"). */
+  resolvedSecrets: Record<string, string>;
+}
+
+/** Load and validate config from a JSON file. Always async. */
+export async function loadConfig(configPath?: string): Promise<LoadConfigResult> {
   const resolved = configPath ?? path.join(getAssurgentHome(), "config.json");
 
   if (!fs.existsSync(resolved)) {
@@ -86,7 +116,47 @@ export function loadConfig(configPath?: string): Config {
   }
 
   const raw = JSON.parse(fs.readFileSync(resolved, "utf-8"));
+
+  // Pre-resolution check: if handlebars exist but no secrets block, fail early
+  if (hasSecretRefs(raw) && !raw.secrets) {
+    throw new Error('Found ${{secretRef.*}} in config but no "secrets" block is defined.');
+  }
+
+  // Resolve secrets if the secrets block exists
+  if (raw.secrets) {
+    const providers = await createProviders(raw.secrets.providers);
+    try {
+      // Resolve each secret entry once and build the resolved secrets map
+      const resolvedSecrets: Record<string, string> = {};
+      const entries = raw.secrets.entries as Record<string, SecretEntry>;
+      for (const [name, entry] of Object.entries(entries)) {
+        const provider = providers.get(entry.provider);
+        if (!provider) {
+          throw new Error(
+            `Secret "${name}" references provider "${entry.provider}" which is not defined in secrets.providers.`,
+          );
+        }
+        resolvedSecrets[name] = await provider.resolve(entry.key);
+      }
+
+      // Substitute handlebars using the already-resolved map (no second provider call)
+      const resolvedConfig = substituteSecrets(raw, resolvedSecrets);
+
+      // Post-resolution check: no handlebars should remain
+      assertNoUnresolvedRefs(resolvedConfig);
+
+      const config = resolvedConfig as Config;
+      validateConfig(config);
+      return { config, resolvedSecrets };
+    } finally {
+      for (const provider of providers.values()) {
+        await provider.dispose?.();
+      }
+    }
+  }
+
+  // No secrets block -- plain config, no resolution needed
   const config = raw as Config;
   validateConfig(config);
-  return config;
+  return { config, resolvedSecrets: {} };
 }

@@ -415,3 +415,4 @@ app/
 - **Session state in `state/`.** Persisted at `state/sessions.json` (follows assurgent convention).
 - **Adapters are interfaces.** Never import concrete adapter classes outside of `src/index.ts`.
 - **The wrapper does not duplicate agent logic.** No permission management, no cost tracking in the wrapper.
+

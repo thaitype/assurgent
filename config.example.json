@@ -1,8 +1,26 @@
 {
+  "secrets": {
+    "providers": {
+      "azure-keyvault": {
+        "vaultUrl": "https://your-vault.vault.azure.net"
+      },
+      "env": {}
+    },
+    "entries": {
+      "telegramBotToken": {
+        "provider": "azure-keyvault",
+        "key": "telegram-bot-token"
+      },
+      "devToken": { "provider": "env", "key": "DEV_TOKEN" }
+    }
+  },
+  "security": {
+    "blacklistEnv": ["AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"]
+  },
   "chat": {
     "adapter": "telegram",
     "telegram": {
-      "botToken": "123456:ABC-DEF...",
+      "botToken": "${{secretRef.telegramBotToken}}",
       "allowedUserIds": ["YOUR_TELEGRAM_USER_ID"],
       "placeholder": {
         "enabled": true,
@@ -21,6 +39,11 @@
   },
   "session": {
     "turnLimit": 20
+  },
+  "proxy": {
+    "port": 9090,
+    "bypassWhitelist": false,
+    "whitelist": ["googleapis.com/calendar/v3/**", "graph.microsoft.com/v1.0/me/calendar/**"]
   },
   "workspacePath": "/path/to/your/workspace"
 }
