@@ -1,34 +1,7 @@
 import { Bot, InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import type { ChatAdapter, IncomingMessage } from "../interfaces/chat-adapter";
-
-/**
- * Splits a text string into chunks of at most maxLength characters.
- * Prefers splitting at the last newline before maxLength.
- * If no newline is found, splits at maxLength.
- * Trims leading whitespace from subsequent chunks.
- */
-export function splitMessage(text: string, maxLength: number): string[] {
-  if (text.length <= maxLength) return [text];
-
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      chunks.push(remaining);
-      break;
-    }
-
-    let splitAt = remaining.lastIndexOf("\n", maxLength);
-    if (splitAt <= 0) splitAt = maxLength;
-
-    chunks.push(remaining.slice(0, splitAt));
-    remaining = remaining.slice(splitAt).trimStart();
-  }
-
-  return chunks;
-}
+import { processMarkdown, sendWithFallback } from "./telegram-markdown";
 
 export class TelegramAdapter implements ChatAdapter {
   private bot: Bot;
@@ -91,13 +64,20 @@ export class TelegramAdapter implements ChatAdapter {
   }
 
   async sendText(chatId: string, text: string): Promise<void> {
-    const chunks = splitMessage(text, 4000);
-    for (const chunk of chunks) {
-      try {
-        await this.bot.api.sendMessage(Number(chatId), chunk, { parse_mode: "Markdown" });
-      } catch {
-        await this.bot.api.sendMessage(Number(chatId), chunk);
-      }
+    const { raw, escaped } = processMarkdown(text);
+    for (let i = 0; i < raw.length; i++) {
+      await sendWithFallback(
+        (chunk, parseMode) =>
+          this.bot.api
+            .sendMessage(
+              Number(chatId),
+              chunk,
+              parseMode ? { parse_mode: parseMode as "MarkdownV2" | "Markdown" } : {},
+            )
+            .then(() => {}),
+        raw[i],
+        escaped[i],
+      );
     }
   }
 
@@ -112,20 +92,37 @@ export class TelegramAdapter implements ChatAdapter {
   }
 
   async editMessage(chatId: string, messageId: number, text: string): Promise<void> {
-    const chunks = splitMessage(text, 4000);
-    try {
-      await this.bot.api.editMessageText(Number(chatId), messageId, chunks[0], {
-        parse_mode: "Markdown",
-      });
-    } catch {
-      await this.bot.api.editMessageText(Number(chatId), messageId, chunks[0]);
-    }
-    for (let i = 1; i < chunks.length; i++) {
-      try {
-        await this.bot.api.sendMessage(Number(chatId), chunks[i], { parse_mode: "Markdown" });
-      } catch {
-        await this.bot.api.sendMessage(Number(chatId), chunks[i]);
-      }
+    const { raw, escaped } = processMarkdown(text);
+
+    // Edit the first chunk in the existing message
+    await sendWithFallback(
+      (chunk, parseMode) =>
+        this.bot.api
+          .editMessageText(
+            Number(chatId),
+            messageId,
+            chunk,
+            parseMode ? { parse_mode: parseMode as "MarkdownV2" | "Markdown" } : {},
+          )
+          .then(() => {}),
+      raw[0],
+      escaped[0],
+    );
+
+    // Send remaining chunks as new messages
+    for (let i = 1; i < raw.length; i++) {
+      await sendWithFallback(
+        (chunk, parseMode) =>
+          this.bot.api
+            .sendMessage(
+              Number(chatId),
+              chunk,
+              parseMode ? { parse_mode: parseMode as "MarkdownV2" | "Markdown" } : {},
+            )
+            .then(() => {}),
+        raw[i],
+        escaped[i],
+      );
     }
   }
 
